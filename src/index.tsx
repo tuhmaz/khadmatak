@@ -69,6 +69,372 @@ app.get('/api/hello', (c) => {
   });
 });
 
+// Additional Admin APIs
+
+// Admin: Get System Statistics
+app.get('/api/admin/statistics', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    // Get comprehensive statistics
+    const stats = await Promise.all([
+      // Users statistics
+      env.DB.prepare('SELECT COUNT(*) as total_users FROM users').first(),
+      env.DB.prepare('SELECT COUNT(*) as total_customers FROM users WHERE user_type = "customer"').first(),
+      env.DB.prepare('SELECT COUNT(*) as total_providers FROM users WHERE user_type = "provider"').first(),
+      env.DB.prepare('SELECT COUNT(*) as verified_providers FROM provider_profiles WHERE verification_status = "approved"').first(),
+      env.DB.prepare('SELECT COUNT(*) as pending_providers FROM provider_profiles WHERE verification_status = "pending"').first(),
+      env.DB.prepare('SELECT COUNT(*) as rejected_providers FROM provider_profiles WHERE verification_status = "rejected"').first(),
+      
+      // Requests statistics
+      env.DB.prepare('SELECT COUNT(*) as total_requests FROM service_requests').first(),
+      env.DB.prepare('SELECT COUNT(*) as pending_requests FROM service_requests WHERE status = "pending"').first(),
+      env.DB.prepare('SELECT COUNT(*) as completed_requests FROM service_requests WHERE status = "completed"').first(),
+      env.DB.prepare('SELECT COUNT(*) as in_progress_requests FROM service_requests WHERE status = "in_progress"').first(),
+      
+      // Categories statistics
+      env.DB.prepare('SELECT COUNT(*) as total_categories FROM categories WHERE active = true').first(),
+      
+      // Recent activity
+      env.DB.prepare(`
+        SELECT COUNT(*) as new_users_today 
+        FROM users 
+        WHERE DATE(created_at) = DATE('now')
+      `).first(),
+      env.DB.prepare(`
+        SELECT COUNT(*) as new_requests_today 
+        FROM service_requests 
+        WHERE DATE(created_at) = DATE('now')
+      `).first()
+    ]);
+
+    const [
+      totalUsers, totalCustomers, totalProviders, verifiedProviders, 
+      pendingProviders, rejectedProviders, totalRequests, pendingRequests,
+      completedRequests, inProgressRequests, totalCategories,
+      newUsersToday, newRequestsToday
+    ] = stats;
+
+    return c.json({ 
+      success: true, 
+      data: {
+        users: {
+          total: (totalUsers as any)?.total_users || 0,
+          customers: (totalCustomers as any)?.total_customers || 0,
+          providers: (totalProviders as any)?.total_providers || 0,
+          new_today: (newUsersToday as any)?.new_users_today || 0
+        },
+        providers: {
+          verified: (verifiedProviders as any)?.verified_providers || 0,
+          pending: (pendingProviders as any)?.pending_providers || 0,
+          rejected: (rejectedProviders as any)?.rejected_providers || 0
+        },
+        requests: {
+          total: (totalRequests as any)?.total_requests || 0,
+          pending: (pendingRequests as any)?.pending_requests || 0,
+          completed: (completedRequests as any)?.completed_requests || 0,
+          in_progress: (inProgressRequests as any)?.in_progress_requests || 0,
+          new_today: (newRequestsToday as any)?.new_requests_today || 0
+        },
+        categories: {
+          total: (totalCategories as any)?.total_categories || 0
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching admin statistics:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في جلب الإحصائيات' 
+    }, 500);
+  }
+});
+
+// Admin: Get All Users
+app.get('/api/admin/users', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const page = parseInt(c.req.query('page') || '1');
+    const limit = parseInt(c.req.query('limit') || '20');
+    const userType = c.req.query('user_type') || '';
+    const search = c.req.query('search') || '';
+    const offset = (page - 1) * limit;
+
+    let whereClause = '1=1';
+    const bindings: any[] = [];
+
+    if (userType) {
+      whereClause += ' AND user_type = ?';
+      bindings.push(userType);
+    }
+
+    if (search) {
+      whereClause += ' AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)';
+      const searchTerm = `%${search}%`;
+      bindings.push(searchTerm, searchTerm, searchTerm);
+    }
+
+    const users = await env.DB.prepare(`
+      SELECT 
+        id, name, email, phone, user_type, city, address,
+        verified, active, created_at, updated_at
+      FROM users 
+      WHERE ${whereClause}
+      ORDER BY created_at DESC 
+      LIMIT ? OFFSET ?
+    `).bind(...bindings, limit, offset).all();
+
+    const totalCount = await env.DB.prepare(`
+      SELECT COUNT(*) as count FROM users WHERE ${whereClause}
+    `).bind(...bindings).first() as any;
+
+    return c.json({ 
+      success: true, 
+      data: {
+        users: users.results || [],
+        pagination: {
+          page,
+          limit,
+          total: totalCount?.count || 0,
+          pages: Math.ceil((totalCount?.count || 0) / limit)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في جلب المستخدمين' 
+    }, 500);
+  }
+});
+
+// Admin: Update User Status
+app.post('/api/admin/users/:userId/status', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const userId = c.req.param('userId');
+    const { active } = await c.req.json();
+
+    if (typeof active !== 'boolean') {
+      return c.json({ 
+        success: false, 
+        error: 'حالة المستخدم يجب أن تكون true أو false' 
+      }, 400);
+    }
+
+    // Prevent admin from deactivating themselves
+    if (parseInt(userId) === user.id && !active) {
+      return c.json({ 
+        success: false, 
+        error: 'لا يمكنك إلغاء تفعيل حسابك الخاص' 
+      }, 400);
+    }
+
+    await env.DB.prepare(`
+      UPDATE users 
+      SET active = ?, updated_at = CURRENT_TIMESTAMP 
+      WHERE id = ?
+    `).bind(active, userId).run();
+
+    const action = active ? 'تفعيل' : 'إلغاء تفعيل';
+    return c.json({ 
+      success: true, 
+      message: `تم ${action} المستخدم بنجاح` 
+    });
+
+  } catch (error) {
+    console.error('Error updating user status:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في تحديث حالة المستخدم' 
+    }, 500);
+  }
+});
+
+// Admin: Get All Service Requests
+app.get('/api/admin/requests', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const page = parseInt(c.req.query('page') || '1');
+    const limit = parseInt(c.req.query('limit') || '20');
+    const status = c.req.query('status') || '';
+    const offset = (page - 1) * limit;
+
+    let whereClause = '1=1';
+    const bindings: any[] = [];
+
+    if (status) {
+      whereClause += ' AND sr.status = ?';
+      bindings.push(status);
+    }
+
+    const requests = await env.DB.prepare(`
+      SELECT 
+        sr.id, sr.title, sr.description, sr.location_address,
+        sr.preferred_date, sr.budget_min, sr.budget_max, 
+        sr.emergency, sr.status, sr.created_at,
+        c.name_ar as category_name,
+        u.name as customer_name, u.email as customer_email, u.phone as customer_phone,
+        pp.business_name as provider_business_name,
+        pu.name as provider_name
+      FROM service_requests sr
+      JOIN categories c ON sr.category_id = c.id
+      JOIN users u ON sr.customer_id = u.id
+      LEFT JOIN provider_profiles pp ON sr.assigned_provider_id = pp.id
+      LEFT JOIN users pu ON pp.user_id = pu.id
+      WHERE ${whereClause}
+      ORDER BY sr.created_at DESC 
+      LIMIT ? OFFSET ?
+    `).bind(...bindings, limit, offset).all();
+
+    const totalCount = await env.DB.prepare(`
+      SELECT COUNT(*) as count 
+      FROM service_requests sr 
+      WHERE ${whereClause}
+    `).bind(...bindings).first() as any;
+
+    return c.json({ 
+      success: true, 
+      data: {
+        requests: requests.results || [],
+        pagination: {
+          page,
+          limit,
+          total: totalCount?.count || 0,
+          pages: Math.ceil((totalCount?.count || 0) / limit)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching service requests:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في جلب طلبات الخدمة' 
+    }, 500);
+  }
+});
+
+// Admin: Get All Categories
+app.get('/api/admin/categories', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const categories = await env.DB.prepare(`
+      SELECT 
+        c.id, c.name_ar, c.name_en, c.description_ar, c.description_en,
+        c.icon, c.sort_order, c.active, c.created_at,
+        COUNT(pc.provider_id) as providers_count
+      FROM categories c
+      LEFT JOIN provider_categories pc ON c.id = pc.category_id
+      GROUP BY c.id
+      ORDER BY c.sort_order ASC, c.name_ar ASC
+    `).all();
+
+    return c.json({ 
+      success: true, 
+      data: categories.results || []
+    });
+
+  } catch (error) {
+    console.error('Error fetching categories:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في جلب الفئات' 
+    }, 500);
+  }
+});
+
+// Admin: Update Category Status
+app.post('/api/admin/categories/:categoryId/status', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const categoryId = c.req.param('categoryId');
+    const { active } = await c.req.json();
+
+    if (typeof active !== 'boolean') {
+      return c.json({ 
+        success: false, 
+        error: 'حالة الفئة يجب أن تكون true أو false' 
+      }, 400);
+    }
+
+    await env.DB.prepare(`
+      UPDATE categories 
+      SET active = ?, updated_at = CURRENT_TIMESTAMP 
+      WHERE id = ?
+    `).bind(active, categoryId).run();
+
+    const action = active ? 'تفعيل' : 'إلغاء تفعيل';
+    return c.json({ 
+      success: true, 
+      message: `تم ${action} الفئة بنجاح` 
+    });
+
+  } catch (error) {
+    console.error('Error updating category status:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في تحديث حالة الفئة' 
+    }, 500);
+  }
+});
+
 // Authentication Routes
 
 // User Registration (Customers)
