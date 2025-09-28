@@ -133,28 +133,53 @@ app.post('/api/register', async (c) => {
     }
 
     try {
+      // Determine user type (default to 'customer' if not specified)
+      const actualUserType = user_type === 'provider' ? 'provider' : 'customer';
+      const isVerified = actualUserType === 'customer'; // Customers are auto-verified, providers need verification
+      
       // Create user record
       const result = await env.DB.prepare(`
         INSERT INTO users (email, password_hash, name, phone, user_type, city, address, verified, active)
-        VALUES (?, ?, ?, ?, 'customer', ?, ?, true, true)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, true)
       `).bind(
         sanitizeInput(email),
         hashedPassword,
         sanitizeInput(name),
         sanitizeInput(phone),
+        actualUserType,
         sanitizeInput(city || 'عمّان'),
-        sanitizeInput(address || '')
+        sanitizeInput(address || ''),
+        isVerified
       ).run();
 
       const userId = result.meta.last_row_id;
+
+      // If provider type, create basic provider profile
+      if (actualUserType === 'provider') {
+        await env.DB.prepare(`
+          INSERT INTO provider_profiles (
+            user_id, business_name, national_id, experience_years, 
+            description, coverage_areas, minimum_charge, 
+            verification_status, available, documents_uploaded
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', true, false)
+        `).bind(
+          userId,
+          sanitizeInput(`${name} - خدمات منزلية`), // Default business name
+          '0000000000', // Temporary national ID
+          0, // Default experience
+          sanitizeInput('مقدم خدمات منزلية محترف'), // Default description
+          JSON.stringify([city || 'عمّان']), // Default coverage area
+          25.00 // Default minimum charge
+        ).run();
+      }
 
       // Generate JWT token
       const token = await generateJWT({
         id: Number(userId),
         email: sanitizeInput(email),
         name: sanitizeInput(name),
-        user_type: 'customer',
-        verified: true
+        user_type: actualUserType,
+        verified: isVerified
       }, JWT_SECRET);
 
       // Set secure cookie
@@ -162,13 +187,15 @@ app.post('/api/register', async (c) => {
 
       return c.json({ 
         success: true, 
-        message: 'تم إنشاء الحساب بنجاح! مرحباً بك في منصة خدماتك',
+        message: actualUserType === 'provider' 
+          ? 'تم إنشاء حساب مقدم الخدمة بنجاح! سيتم مراجعة طلبك قريباً.'
+          : 'تم إنشاء الحساب بنجاح! مرحباً بك في منصة خدماتك',
         user: {
           id: Number(userId),
           email: sanitizeInput(email),
           name: sanitizeInput(name),
-          user_type: 'customer',
-          verified: true
+          user_type: actualUserType,
+          verified: isVerified
         },
         token
       });
