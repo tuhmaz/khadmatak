@@ -1,15 +1,116 @@
 // Authentication and Security utilities for Jordan Home Services Platform
 
-import bcrypt from 'bcryptjs';
-
-// Password hashing utilities
+// Password hashing utilities using Web Crypto API (Cloudflare Workers compatible)
 export async function hashPassword(password: string): Promise<string> {
-  const salt = await bcrypt.genSalt(12);
-  return bcrypt.hash(password, salt);
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  
+  // Generate random salt
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  
+  // Import password as key material
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    data,
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  
+  // Derive key using PBKDF2
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: 100000, // Strong iteration count
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    256 // 32 bytes
+  );
+  
+  // Combine salt and hash
+  const hashBytes = new Uint8Array(derivedBits);
+  const combined = new Uint8Array(48); // 16 bytes salt + 32 bytes hash
+  combined.set(salt, 0);
+  combined.set(hashBytes, 16);
+  
+  // Convert to base64 for storage
+  return btoa(String.fromCharCode(...combined));
 }
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  return bcrypt.compare(password, hash);
+  try {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    
+    // Decode stored hash
+    const combined = new Uint8Array(
+      atob(hash).split('').map(char => char.charCodeAt(0))
+    );
+    
+    const salt = combined.slice(0, 16);
+    const storedHash = combined.slice(16);
+    
+    // Import password as key material
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw',
+      data,
+      'PBKDF2',
+      false,
+      ['deriveBits']
+    );
+    
+    // Derive key using same parameters
+    const derivedBits = await crypto.subtle.deriveBits(
+      {
+        name: 'PBKDF2',
+        salt: salt,
+        iterations: 100000,
+        hash: 'SHA-256'
+      },
+      keyMaterial,
+      256
+    );
+    
+    const derivedHash = new Uint8Array(derivedBits);
+    
+    // Compare hashes
+    if (derivedHash.length !== storedHash.length) {
+      return false;
+    }
+    
+    for (let i = 0; i < derivedHash.length; i++) {
+      if (derivedHash[i] !== storedHash[i]) {
+        return false;
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Password verification error:', error);
+    return false;
+  }
+}
+
+// UTF-8 safe base64url encoder
+function base64urlEncode(str: string): string {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(str);
+  const base64 = btoa(String.fromCharCode(...bytes));
+  return base64.replace(/[+\/]/g, c => c === '+' ? '-' : '_').replace(/=/g, '');
+}
+
+// UTF-8 safe base64url decoder
+function base64urlDecode(str: string): string {
+  const base64 = str.replace(/[-_]/g, c => c === '-' ? '+' : '/').padEnd(str.length + (4 - str.length % 4) % 4, '=');
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const decoder = new TextDecoder();
+  return decoder.decode(bytes);
 }
 
 // Simple JWT utilities (using Web Crypto API for Cloudflare Workers)
@@ -27,8 +128,8 @@ export async function generateJWT(payload: any, secret: string): Promise<string>
   };
 
   const encoder = new TextEncoder();
-  const headerBase64 = btoa(JSON.stringify(header)).replace(/[+\/]/g, c => c === '+' ? '-' : '_').replace(/=/g, '');
-  const payloadBase64 = btoa(JSON.stringify(jwtPayload)).replace(/[+\/]/g, c => c === '+' ? '-' : '_').replace(/=/g, '');
+  const headerBase64 = base64urlEncode(JSON.stringify(header));
+  const payloadBase64 = base64urlEncode(JSON.stringify(jwtPayload));
   
   const data = `${headerBase64}.${payloadBase64}`;
   
@@ -41,7 +142,8 @@ export async function generateJWT(payload: any, secret: string): Promise<string>
   );
   
   const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
-  const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
+  const signatureBytes = new Uint8Array(signature);
+  const signatureBase64 = btoa(String.fromCharCode(...signatureBytes))
     .replace(/[+\/]/g, c => c === '+' ? '-' : '_')
     .replace(/=/g, '');
   
@@ -78,9 +180,7 @@ export async function verifyJWT(token: string, secret: string): Promise<any | nu
       return null;
     }
 
-    const payload = JSON.parse(
-      atob(payloadBase64.replace(/[-_]/g, c => c === '-' ? '+' : '/').padEnd(payloadBase64.length + (4 - payloadBase64.length % 4) % 4, '='))
-    );
+    const payload = JSON.parse(base64urlDecode(payloadBase64));
     
     // Check expiration
     const now = Math.floor(Date.now() / 1000);
@@ -137,11 +237,11 @@ export interface UserSession {
 }
 
 export function createSessionCookie(token: string): string {
-  return `auth_token=${token}; HttpOnly; Secure; SameSite=Strict; Max-Age=86400; Path=/`;
+  return `auth_token=${token}; Secure; SameSite=Strict; Max-Age=86400; Path=/`;
 }
 
 export function clearSessionCookie(): string {
-  return `auth_token=; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Path=/`;
+  return `auth_token=; Secure; SameSite=Strict; Max-Age=0; Path=/`;
 }
 
 // Rate limiting utilities (simple in-memory store for demo)

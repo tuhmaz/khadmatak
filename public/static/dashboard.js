@@ -1,519 +1,557 @@
-// Dashboard JavaScript for Jordan Home Services Platform
+// Dashboard JavaScript - Jordan Home Services Platform
 
+// Configure axios to send cookies with every request
+axios.defaults.withCredentials = true;
+
+// Configure authentication
+configureAxiosAuth();
+
+// Global variables
 let currentUser = null;
-let dashboardData = null;
 
-// Initialize dashboard
+// Initialize the dashboard application
 document.addEventListener('DOMContentLoaded', function() {
-    checkAuthAndLoadDashboard();
+    initializeDashboard();
 });
 
-// Check authentication and load appropriate dashboard
-async function checkAuthAndLoadDashboard() {
+async function initializeDashboard() {
     try {
-        const response = await axios.get('/api/me');
+        // Check authentication status
+        await checkAuthStatus();
         
-        if (response.data.success) {
-            currentUser = response.data.user;
-            
-            if (currentUser.user_type === 'customer') {
-                loadCustomerDashboard();
-            } else if (currentUser.user_type === 'provider') {
-                loadProviderDashboard();
-            } else {
-                showError('نوع المستخدم غير صحيح');
-            }
-        } else {
-            redirectToLogin();
+        if (!currentUser) {
+            // Redirect to main page if not logged in
+            showMessage('يرجى تسجيل الدخول أولاً', 'warning');
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 2000);
+            return;
         }
+        
+        // Update dashboard UI based on user
+        updateDashboardUI();
+        
+        // Load dashboard data based on user type
+        if (currentUser.user_type === 'customer') {
+            await loadCustomerDashboard();
+        } else if (currentUser.user_type === 'provider') {
+            await loadProviderDashboard();
+        } else if (currentUser.user_type === 'admin') {
+            await loadAdminDashboard();
+        }
+        
+        console.log('Dashboard initialized successfully');
     } catch (error) {
-        redirectToLogin();
+        console.error('Error initializing dashboard:', error);
+        showErrorContent();
     }
 }
 
-// Load Customer Dashboard
+// Check if user is logged in
+async function checkAuthStatus() {
+    try {
+        currentUser = await checkAuthenticationStatus();
+    } catch (error) {
+        console.log('Auth check error:', error);
+        currentUser = null;
+    }
+}
+
+// Update dashboard UI based on authenticated user
+function updateDashboardUI() {
+    const userNameElement = document.getElementById('user-name-dashboard');
+    const providerMenuItems = document.getElementById('provider-menu-items-dashboard');
+    
+    if (currentUser && userNameElement) {
+        // Update user name in header
+        const userTypeIcon = currentUser.user_type === 'provider' ? 'fas fa-briefcase' : 
+                            currentUser.user_type === 'admin' ? 'fas fa-shield-alt' : 'fas fa-user';
+        userNameElement.innerHTML = `<i class="${userTypeIcon} ml-2"></i>${currentUser.name}`;
+        
+        // Show/hide provider-specific menu items
+        if (providerMenuItems) {
+            if (currentUser.user_type === 'provider') {
+                providerMenuItems.classList.remove('hidden');
+            } else {
+                providerMenuItems.classList.add('hidden');
+            }
+        }
+    }
+}
+
+// Load customer dashboard
 async function loadCustomerDashboard() {
     try {
+        showMessage('جاري تحميل بيانات لوحة التحكم...', 'info');
         const response = await axios.get('/api/dashboard/customer');
-        
         if (response.data.success) {
-            dashboardData = response.data.data;
-            renderCustomerDashboard();
+            console.log('Customer dashboard data loaded:', response.data.data);
+            renderCustomerDashboard(response.data.data);
+            showMessage('تم تحميل بيانات لوحة التحكم بنجاح', 'success');
         } else {
-            showError(response.data.error);
+            throw new Error(response.data.error || 'فشل في تحميل البيانات');
         }
     } catch (error) {
-        showError('فشل في جلب بيانات لوحة التحكم');
+        console.error('Error loading customer dashboard:', error);
+        showMessage('حدث خطأ في تحميل بيانات العميل: ' + (error.response?.data?.error || error.message), 'error');
+        showErrorContent();
     }
 }
 
-// Load Provider Dashboard
+// Load provider dashboard  
 async function loadProviderDashboard() {
     try {
+        showMessage('جاري تحميل بيانات لوحة التحكم...', 'info');
         const response = await axios.get('/api/dashboard/provider');
-        
         if (response.data.success) {
-            dashboardData = response.data.data;
-            renderProviderDashboard();
+            console.log('Provider dashboard data loaded:', response.data.data);
+            renderProviderDashboard(response.data.data);
+            showMessage('تم تحميل بيانات لوحة التحكم بنجاح', 'success');
         } else {
-            showError(response.data.error);
+            throw new Error(response.data.error || 'فشل في تحميل البيانات');
         }
     } catch (error) {
-        showError('فشل في جلب بيانات لوحة التحكم');
+        console.error('Error loading provider dashboard:', error);
+        showMessage('حدث خطأ في تحميل بيانات مقدم الخدمة: ' + (error.response?.data?.error || error.message), 'error');
+        showErrorContent();
     }
 }
 
-// Render Customer Dashboard
-function renderCustomerDashboard() {
-    const container = document.getElementById('dashboard-container');
-    
-    container.innerHTML = `
-        <!-- Header -->
-        <header class="bg-white shadow-sm border-b">
-            <div class="max-w-7xl mx-auto px-4 py-4">
-                <div class="flex justify-between items-center">
-                    <div class="flex items-center space-x-4 space-x-reverse">
-                        <h1 class="text-2xl font-bold text-primary">
-                            <i class="fas fa-tachometer-alt mr-2"></i>
-                            لوحة تحكم العميل
-                        </h1>
-                        <span class="text-gray-600">مرحباً، ${currentUser.name}</span>
-                    </div>
-                    <div class="flex items-center space-x-4 space-x-reverse">
-                        <a href="/" class="text-gray-600 hover:text-primary transition-colors">
-                            <i class="fas fa-home mr-2"></i>
-                            الصفحة الرئيسية
-                        </a>
-                        <button onclick="logout()" class="text-red-600 hover:text-red-700 transition-colors">
-                            <i class="fas fa-sign-out-alt mr-2"></i>
-                            خروج
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </header>
-
-        <!-- Main Content -->
-        <div class="max-w-7xl mx-auto px-4 py-8">
-            <!-- Stats Cards -->
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                <div class="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <p class="text-gray-600 text-sm font-medium">إجمالي الطلبات</p>
-                            <p class="text-3xl font-bold text-gray-900">${dashboardData.stats.total_requests}</p>
-                        </div>
-                        <div class="bg-blue-100 p-3 rounded-full">
-                            <i class="fas fa-clipboard-list text-blue-600 text-xl"></i>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <p class="text-gray-600 text-sm font-medium">طلبات معلقة</p>
-                            <p class="text-3xl font-bold text-yellow-600">${dashboardData.stats.pending_requests}</p>
-                        </div>
-                        <div class="bg-yellow-100 p-3 rounded-full">
-                            <i class="fas fa-clock text-yellow-600 text-xl"></i>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <p class="text-gray-600 text-sm font-medium">طلبات مكتملة</p>
-                            <p class="text-3xl font-bold text-green-600">${dashboardData.stats.completed_requests}</p>
-                        </div>
-                        <div class="bg-green-100 p-3 rounded-full">
-                            <i class="fas fa-check-circle text-green-600 text-xl"></i>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <p class="text-gray-600 text-sm font-medium">مقدمو خدمات مفضلون</p>
-                            <p class="text-3xl font-bold text-purple-600">${dashboardData.stats.favorite_providers}</p>
-                        </div>
-                        <div class="bg-purple-100 p-3 rounded-full">
-                            <i class="fas fa-heart text-purple-600 text-xl"></i>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <!-- Recent Requests -->
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200">
-                    <div class="p-6 border-b border-gray-200">
-                        <h2 class="text-xl font-bold text-gray-900">
-                            <i class="fas fa-history mr-2"></i>
-                            طلباتك الأخيرة
-                        </h2>
-                    </div>
-                    <div class="p-6">
-                        ${renderCustomerRequests(dashboardData.recent_requests)}
-                    </div>
-                </div>
-
-                <!-- Favorite Providers -->
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200">
-                    <div class="p-6 border-b border-gray-200">
-                        <h2 class="text-xl font-bold text-gray-900">
-                            <i class="fas fa-star mr-2"></i>
-                            مقدمو الخدمات المفضلون
-                        </h2>
-                    </div>
-                    <div class="p-6">
-                        ${renderFavoriteProviders(dashboardData.favorite_providers)}
-                    </div>
-                </div>
-            </div>
-
-            <!-- Quick Actions -->
-            <div class="mt-8 text-center">
-                <button onclick="requestNewService()" class="bg-primary text-white px-8 py-4 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg">
-                    <i class="fas fa-plus mr-2"></i>
-                    طلب خدمة جديدة
-                </button>
-            </div>
-        </div>
-    `;
+// Load admin dashboard
+async function loadAdminDashboard() {
+    try {
+        // Load admin-specific data here
+        renderAdminDashboard();
+    } catch (error) {
+        console.error('Error loading admin dashboard:', error);
+        showMessage('حدث خطأ في تحميل بيانات الإدارة', 'error');
+    }
 }
 
-// Render Provider Dashboard
-function renderProviderDashboard() {
+// Render customer dashboard
+function renderCustomerDashboard(data) {
     const container = document.getElementById('dashboard-container');
     
-    container.innerHTML = `
-        <!-- Header -->
-        <header class="bg-white shadow-sm border-b">
-            <div class="max-w-7xl mx-auto px-4 py-4">
-                <div class="flex justify-between items-center">
-                    <div class="flex items-center space-x-4 space-x-reverse">
-                        <h1 class="text-2xl font-bold text-primary">
-                            <i class="fas fa-briefcase mr-2"></i>
-                            لوحة تحكم مقدم الخدمة
-                        </h1>
-                        <span class="text-gray-600">مرحباً، ${currentUser.name}</span>
-                        ${currentUser.verified ? 
-                            '<span class="verification-badge verified"><i class="fas fa-check-circle mr-1"></i>محقق</span>' : 
-                            '<span class="verification-badge pending"><i class="fas fa-clock mr-1"></i>قيد المراجعة</span>'
-                        }
+    // Handle empty recent_requests
+    const recentRequestsHtml = data.recent_requests && data.recent_requests.length > 0 ? 
+        data.recent_requests.map(request => {
+            const createdDate = new Date(request.created_at).toLocaleDateString('ar-JO');
+            const budgetText = request.budget_min && request.budget_max ? 
+                `${request.budget_min} - ${request.budget_max} د.أ` : 
+                (request.budget_min ? `${request.budget_min} د.أ` : 'غير محدد');
+            
+            return `
+                <div class="flex items-center justify-between p-4 border rounded-lg mb-4 last:mb-0">
+                    <div>
+                        <h3 class="font-semibold text-gray-800">${request.title}</h3>
+                        <p class="text-sm text-gray-600">${request.category_name} • ${createdDate}</p>
+                        <p class="text-sm text-gray-600">الميزانية: ${budgetText}</p>
+                        ${request.provider_name ? `<p class="text-sm text-blue-600">يعمل عليه: ${request.provider_name}</p>` : ''}
+                        ${request.emergency ? '<span class="emergency-badge text-xs">طارئ</span>' : ''}
                     </div>
-                    <div class="flex items-center space-x-4 space-x-reverse">
-                        <a href="/" class="text-gray-600 hover:text-primary transition-colors">
-                            <i class="fas fa-home mr-2"></i>
-                            الصفحة الرئيسية
-                        </a>
-                        <button onclick="logout()" class="text-red-600 hover:text-red-700 transition-colors">
-                            <i class="fas fa-sign-out-alt mr-2"></i>
-                            خروج
-                        </button>
+                    <div class="flex items-center space-x-2 space-x-reverse">
+                        <span class="status-badge status-${request.status}">
+                            ${getStatusText(request.status)}
+                        </span>
+                        ${request.customer_rating ? `
+                            <div class="rating-stars">
+                                ${'★'.repeat(request.customer_rating)}${'☆'.repeat(5-request.customer_rating)}
+                            </div>
+                        ` : ''}
                     </div>
                 </div>
+            `;
+        }).join('') : 
+        '<div class="text-center py-8 text-gray-500"><i class="fas fa-inbox text-3xl mb-4"></i><br>لا توجد طلبات حتى الآن</div>';
+
+    // Handle empty favorite_providers
+    const favoriteProvidersHtml = data.favorite_providers && data.favorite_providers.length > 0 ? 
+        `<div class="bg-white rounded-lg shadow mb-8">
+            <div class="p-6 border-b">
+                <h2 class="text-xl font-bold text-gray-800">
+                    <i class="fas fa-heart ml-2"></i>
+                    مقدمو الخدمات المفضلون
+                </h2>
             </div>
-        </header>
-
-        <!-- Main Content -->
-        <div class="max-w-7xl mx-auto px-4 py-8">
-            <!-- Stats Cards -->
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                <div class="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <p class="text-gray-600 text-sm font-medium">إجمالي الأعمال</p>
-                            <p class="text-3xl font-bold text-gray-900">${dashboardData.stats.total_jobs}</p>
-                        </div>
-                        <div class="bg-blue-100 p-3 rounded-full">
-                            <i class="fas fa-tools text-blue-600 text-xl"></i>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <p class="text-gray-600 text-sm font-medium">طلبات جديدة</p>
-                            <p class="text-3xl font-bold text-yellow-600">${dashboardData.stats.pending_requests}</p>
-                        </div>
-                        <div class="bg-yellow-100 p-3 rounded-full">
-                            <i class="fas fa-bell text-yellow-600 text-xl"></i>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <p class="text-gray-600 text-sm font-medium">الأرباح الشهرية</p>
-                            <p class="text-2xl font-bold text-green-600">${dashboardData.stats.monthly_earnings} د.أ</p>
-                        </div>
-                        <div class="bg-green-100 p-3 rounded-full">
-                            <i class="fas fa-money-bill-wave text-green-600 text-xl"></i>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <p class="text-gray-600 text-sm font-medium">التقييم العام</p>
-                            <div class="flex items-center">
-                                <p class="text-2xl font-bold text-purple-600">${dashboardData.stats.avg_rating}</p>
-                                <div class="rating-stars mr-2 text-yellow-400">★★★★★</div>
+            <div class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    ${data.favorite_providers.map(provider => `
+                        <div class="border rounded-lg p-4">
+                            <h4 class="font-semibold text-gray-800">${provider.business_name}</h4>
+                            <p class="text-sm text-gray-600">${provider.provider_name}</p>
+                            <p class="text-xs text-gray-500">${provider.categories}</p>
+                            <div class="flex items-center justify-between mt-2">
+                                <div class="rating-stars text-sm">
+                                    ${'★'.repeat(Math.floor(provider.average_rating))}${'☆'.repeat(5-Math.floor(provider.average_rating))}
+                                    <span class="text-gray-600 mr-1">(${provider.average_rating})</span>
+                                </div>
+                                <span class="text-xs text-gray-500">${provider.total_jobs} عمل</span>
                             </div>
                         </div>
-                        <div class="bg-purple-100 p-3 rounded-full">
-                            <i class="fas fa-star text-purple-600 text-xl"></i>
+                    `).join('')}
+                </div>
+            </div>
+        </div>` : '';
+    
+    container.innerHTML = `
+        <div class="max-w-7xl mx-auto px-4 py-8">
+            <div class="mb-8">
+                <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                    <i class="fas fa-tachometer-alt ml-2"></i>
+                    لوحة تحكم العميل
+                </h1>
+                <p class="text-gray-600">مرحباً بك ${currentUser.name}، إدارة طلباتك وخدماتك</p>
+            </div>
+            
+            <!-- Quick Action -->
+            <div class="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg p-6 mb-8">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-xl font-bold mb-2">هل تحتاج خدمة جديدة؟</h2>
+                        <p class="opacity-90">اطلب خدمة منزلية الآن وستجد أفضل مقدمي الخدمات</p>
+                    </div>
+                    <a href="/#request-service" class="bg-white text-blue-600 px-6 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors">
+                        <i class="fas fa-plus ml-2"></i>
+                        طلب خدمة جديدة
+                    </a>
+                </div>
+            </div>
+            
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <div class="flex items-center">
+                        <div class="p-3 bg-blue-100 rounded-full">
+                            <i class="fas fa-clipboard-list text-blue-600"></i>
+                        </div>
+                        <div class="mr-4">
+                            <p class="text-sm text-gray-600">إجمالي الطلبات</p>
+                            <p class="text-2xl font-bold text-gray-800">${data.stats.total_requests}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <div class="flex items-center">
+                        <div class="p-3 bg-yellow-100 rounded-full">
+                            <i class="fas fa-clock text-yellow-600"></i>
+                        </div>
+                        <div class="mr-4">
+                            <p class="text-sm text-gray-600">في الانتظار</p>
+                            <p class="text-2xl font-bold text-gray-800">${data.stats.pending_requests}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <div class="flex items-center">
+                        <div class="p-3 bg-green-100 rounded-full">
+                            <i class="fas fa-check-circle text-green-600"></i>
+                        </div>
+                        <div class="mr-4">
+                            <p class="text-sm text-gray-600">مكتملة</p>
+                            <p class="text-2xl font-bold text-gray-800">${data.stats.completed_requests}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <div class="flex items-center">
+                        <div class="p-3 bg-purple-100 rounded-full">
+                            <i class="fas fa-heart text-purple-600"></i>
+                        </div>
+                        <div class="mr-4">
+                            <p class="text-sm text-gray-600">المفضلة</p>
+                            <p class="text-2xl font-bold text-gray-800">${data.stats.favorite_providers}</p>
                         </div>
                     </div>
                 </div>
             </div>
-
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <!-- New Requests -->
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200">
-                    <div class="p-6 border-b border-gray-200">
-                        <h2 class="text-xl font-bold text-gray-900">
-                            <i class="fas fa-inbox mr-2"></i>
-                            طلبات جديدة (${dashboardData.stats.pending_requests})
-                        </h2>
-                    </div>
-                    <div class="p-6">
-                        ${renderProviderRequests(dashboardData.recent_requests)}
-                    </div>
-                </div>
-
-                <!-- Earnings Chart -->
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200">
-                    <div class="p-6 border-b border-gray-200">
-                        <h2 class="text-xl font-bold text-gray-900">
-                            <i class="fas fa-chart-line mr-2"></i>
-                            الأرباح الشهرية
-                        </h2>
-                    </div>
-                    <div class="p-6">
-                        <canvas id="earningsChart" width="400" height="200"></canvas>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Recent Jobs -->
-            <div class="mt-8 bg-white rounded-xl shadow-sm border border-gray-200">
-                <div class="p-6 border-b border-gray-200">
-                    <h2 class="text-xl font-bold text-gray-900">
-                        <i class="fas fa-check-circle mr-2"></i>
-                        الأعمال المكتملة مؤخراً
+            
+            <!-- Recent Requests -->
+            <div class="bg-white rounded-lg shadow mb-8">
+                <div class="p-6 border-b">
+                    <h2 class="text-xl font-bold text-gray-800">
+                        <i class="fas fa-history ml-2"></i>
+                        طلباتي الأخيرة
                     </h2>
                 </div>
                 <div class="p-6">
-                    ${renderRecentJobs(dashboardData.recent_jobs)}
+                    ${recentRequestsHtml}
+                </div>
+            </div>
+            
+            ${favoriteProvidersHtml}
+        </div>
+    `;
+}
+
+// Render provider dashboard
+function renderProviderDashboard(data) {
+    const container = document.getElementById('dashboard-container');
+    
+    // Handle verification status badge
+    const getVerificationBadge = (status) => {
+        if (status === 'approved' || status === 'verified') {
+            return '<span class="verification-badge verified"><i class="fas fa-check-circle ml-1"></i>محقق</span>';
+        } else if (status === 'pending') {
+            return '<span class="verification-badge pending"><i class="fas fa-clock ml-1"></i>قيد المراجعة</span>';
+        } else {
+            return '<span class="verification-badge" style="background: #fee2e2; color: #991b1b;"><i class="fas fa-times-circle ml-1"></i>غير محقق</span>';
+        }
+    };
+    
+    // Handle empty recent_requests
+    const recentRequestsHtml = data.recent_requests && data.recent_requests.length > 0 ? 
+        data.recent_requests.map(request => {
+            const createdDate = new Date(request.created_at).toLocaleDateString('ar-JO');
+            const budgetText = request.budget_min && request.budget_max ? 
+                `${request.budget_min} - ${request.budget_max} د.أ` : 
+                (request.budget_min ? `${request.budget_min} د.أ` : 'غير محدد');
+            
+            return `
+                <div class="p-4 border rounded-lg mb-4 last:mb-0">
+                    <div class="flex items-start justify-between mb-2">
+                        <h3 class="font-semibold text-gray-800">${request.title}</h3>
+                        ${request.emergency ? '<span class="emergency-badge">طارئ</span>' : ''}
+                    </div>
+                    <p class="text-sm text-gray-600 mb-2">${request.customer_name} • ${request.customer_city}</p>
+                    <p class="text-sm text-gray-600 mb-2">الميزانية: ${budgetText}</p>
+                    <p class="text-sm text-gray-600 mb-2">${request.category_name}</p>
+                    <p class="text-xs text-gray-500 mb-3">${request.description}</p>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-gray-500">${createdDate}</span>
+                        <button class="btn-primary text-sm py-2 px-4" onclick="respondToRequest(${request.id})">
+                            تقدم للعمل
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('') : 
+        '<div class="text-center py-8 text-gray-500"><i class="fas fa-inbox text-3xl mb-4"></i><br>لا توجد طلبات جديدة حالياً</div>';
+
+    // Handle empty recent_jobs
+    const recentJobsHtml = data.recent_jobs && data.recent_jobs.length > 0 ? 
+        data.recent_jobs.map(job => {
+            const completedDate = new Date(job.completed_at).toLocaleDateString('ar-JO');
+            const ratingStars = job.rating_received ? 
+                '★'.repeat(job.rating_received) + '☆'.repeat(5-job.rating_received) : 
+                'لم يتم التقييم بعد';
+            
+            return `
+                <div class="p-4 border rounded-lg mb-4 last:mb-0">
+                    <h3 class="font-semibold text-gray-800">${job.title}</h3>
+                    <p class="text-sm text-gray-600">${job.customer_name}</p>
+                    <div class="flex items-center justify-between mt-2">
+                        <span class="text-sm text-gray-500">اكتمل في: ${completedDate}</span>
+                        <div class="flex items-center space-x-2 space-x-reverse">
+                            <div class="rating-stars text-sm">
+                                ${ratingStars}
+                            </div>
+                            <span class="text-sm font-semibold text-green-600">${job.earnings || 0} د.أ</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('') : 
+        '<div class="text-center py-8 text-gray-500"><i class="fas fa-history text-3xl mb-4"></i><br>لا توجد أعمال مكتملة بعد</div>';
+    
+    container.innerHTML = `
+        <div class="max-w-7xl mx-auto px-4 py-8">
+            <div class="mb-8">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                            <i class="fas fa-briefcase ml-2"></i>
+                            لوحة تحكم مقدم الخدمة
+                        </h1>
+                        <p class="text-gray-600">مرحباً بك ${currentUser.name}، إدارة خدماتك وطلباتك</p>
+                    </div>
+                    <div class="text-left">
+                        ${getVerificationBadge(data.stats.verification_status)}
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Verification Alert -->
+            ${data.stats.verification_status !== 'approved' && data.stats.verification_status !== 'verified' ? `
+                <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-8">
+                    <div class="flex items-center">
+                        <i class="fas fa-exclamation-triangle text-yellow-600 text-xl ml-3"></i>
+                        <div>
+                            <h3 class="text-yellow-800 font-semibold">حساب غير محقق</h3>
+                            <p class="text-yellow-700 text-sm">يرجى إكمال عملية التحقق لتتمكن من استقبال طلبات الخدمة</p>
+                        </div>
+                    </div>
+                </div>
+            ` : ''}
+            
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <div class="flex items-center">
+                        <div class="p-3 bg-blue-100 rounded-full">
+                            <i class="fas fa-tasks text-blue-600"></i>
+                        </div>
+                        <div class="mr-4">
+                            <p class="text-sm text-gray-600">إجمالي الأعمال</p>
+                            <p class="text-2xl font-bold text-gray-800">${data.stats.total_jobs}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <div class="flex items-center">
+                        <div class="p-3 bg-yellow-100 rounded-full">
+                            <i class="fas fa-clock text-yellow-600"></i>
+                        </div>
+                        <div class="mr-4">
+                            <p class="text-sm text-gray-600">طلبات متاحة</p>
+                            <p class="text-2xl font-bold text-gray-800">${data.stats.available_requests}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <div class="flex items-center">
+                        <div class="p-3 bg-green-100 rounded-full">
+                            <i class="fas fa-star text-green-600"></i>
+                        </div>
+                        <div class="mr-4">
+                            <p class="text-sm text-gray-600">التقييم</p>
+                            <p class="text-2xl font-bold text-gray-800">${(data.stats.avg_rating || 0).toFixed(1)}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <div class="flex items-center">
+                        <div class="p-3 bg-purple-100 rounded-full">
+                            <i class="fas fa-money-bill-wave text-purple-600"></i>
+                        </div>
+                        <div class="mr-4">
+                            <p class="text-sm text-gray-600">الأرباح الشهرية</p>
+                            <p class="text-2xl font-bold text-gray-800">${data.stats.monthly_earnings || 0} د.أ</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Additional Stats -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="bg-white p-6 rounded-lg shadow text-center">
+                    <i class="fas fa-chart-line text-3xl text-blue-600 mb-2"></i>
+                    <p class="text-sm text-gray-600">إجمالي الأرباح</p>
+                    <p class="text-xl font-bold text-gray-800">${data.stats.total_earnings || 0} د.أ</p>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow text-center">
+                    <i class="fas fa-check-circle text-3xl text-green-600 mb-2"></i>
+                    <p class="text-sm text-gray-600">أعمال مكتملة</p>
+                    <p class="text-xl font-bold text-gray-800">${data.stats.completed_jobs}</p>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow text-center">
+                    <i class="fas fa-comments text-3xl text-yellow-600 mb-2"></i>
+                    <p class="text-sm text-gray-600">إجمالي التقييمات</p>
+                    <p class="text-xl font-bold text-gray-800">${data.stats.total_reviews || 0}</p>
+                </div>
+            </div>
+            
+            <!-- Main Content Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- Available Requests -->
+                <div class="bg-white rounded-lg shadow">
+                    <div class="p-6 border-b">
+                        <h2 class="text-xl font-bold text-gray-800">
+                            <i class="fas fa-bell ml-2"></i>
+                            الطلبات المتاحة
+                        </h2>
+                    </div>
+                    <div class="p-6 max-h-96 overflow-y-auto">
+                        ${recentRequestsHtml}
+                    </div>
+                </div>
+                
+                <!-- Recent Completed Jobs -->
+                <div class="bg-white rounded-lg shadow">
+                    <div class="p-6 border-b">
+                        <h2 class="text-xl font-bold text-gray-800">
+                            <i class="fas fa-history ml-2"></i>
+                            الأعمال المكتملة
+                        </h2>
+                    </div>
+                    <div class="p-6 max-h-96 overflow-y-auto">
+                        ${recentJobsHtml}
+                    </div>
                 </div>
             </div>
         </div>
     `;
+}
 
-    // Initialize earnings chart
+// Render admin dashboard
+function renderAdminDashboard() {
+    const container = document.getElementById('dashboard-container');
+    container.innerHTML = `
+        <div class="max-w-7xl mx-auto px-4 py-8">
+            <div class="mb-8">
+                <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                    <i class="fas fa-shield-alt ml-2"></i>
+                    لوحة تحكم الإدارة
+                </h1>
+                <p class="text-gray-600">مرحباً بك ${currentUser.name}، إدارة النظام والمستخدمين</p>
+            </div>
+            
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">إدارة النظام</h2>
+                <p class="text-gray-600">ميزات الإدارة قيد التطوير...</p>
+            </div>
+        </div>
+    `;
+}
+
+// Show error content
+function showErrorContent() {
+    const container = document.getElementById('dashboard-container');
+    container.innerHTML = `
+        <div class="flex items-center justify-center min-h-screen">
+            <div class="text-center">
+                <i class="fas fa-exclamation-triangle text-4xl text-red-500 mb-4"></i>
+                <h2 class="text-2xl font-bold text-gray-800 mb-4">حدث خطأ في التحميل</h2>
+                <p class="text-gray-600 mb-6">نعتذر، حدث خطأ أثناء تحميل لوحة التحكم</p>
+                <button onclick="initializeDashboard()" class="btn-primary">
+                    <i class="fas fa-redo ml-2"></i>
+                    إعادة المحاولة
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+// Show message to user
+function showMessage(message, type = 'info') {
+    // Remove any existing messages
+    const existingMessage = document.querySelector('.message-alert');
+    if (existingMessage) {
+        existingMessage.remove();
+    }
+    
+    // Create new message
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message-alert fixed top-4 right-4 left-4 md:right-4 md:left-auto md:max-w-md z-50 ${type === 'success' ? 'success-message' : type === 'warning' ? 'bg-yellow-500 text-white p-4 rounded-lg' : 'error-message'}`;
+    messageDiv.innerHTML = `
+        <div class="flex items-center justify-between">
+            <span>${message}</span>
+            <button onclick="this.parentElement.parentElement.remove()" class="text-white hover:text-gray-200">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    `;
+    
+    document.body.appendChild(messageDiv);
+    
+    // Auto-remove after 5 seconds
     setTimeout(() => {
-        initializeEarningsChart();
-    }, 100);
-}
-
-// Render customer requests
-function renderCustomerRequests(requests) {
-    if (!requests || requests.length === 0) {
-        return '<p class="text-gray-500 text-center py-8">لا توجد طلبات حتى الآن</p>';
-    }
-
-    return requests.map(request => `
-        <div class="border border-gray-200 rounded-lg p-4 mb-4 last:mb-0">
-            <div class="flex justify-between items-start mb-2">
-                <h3 class="font-bold text-gray-900">${request.title}</h3>
-                <span class="status-badge ${getStatusClass(request.status)}">
-                    ${getStatusText(request.status)}
-                </span>
-            </div>
-            <p class="text-gray-600 text-sm mb-2">
-                <i class="fas fa-tools mr-2"></i>${request.category}
-            </p>
-            ${request.provider_name ? `
-                <p class="text-gray-600 text-sm mb-2">
-                    <i class="fas fa-user mr-2"></i>مقدم الخدمة: ${request.provider_name}
-                </p>
-            ` : ''}
-            <p class="text-gray-500 text-xs mb-3">${formatDate(request.created_at)}</p>
-            
-            <div class="flex justify-between items-center">
-                <div>
-                    ${request.rating_given ? `
-                        <div class="text-yellow-400">
-                            ${'★'.repeat(request.rating_given)}${'☆'.repeat(5 - request.rating_given)}
-                        </div>
-                    ` : request.status === 'completed' ? `
-                        <button onclick="rateService(${request.id})" class="text-primary hover:underline text-sm">
-                            تقييم الخدمة
-                        </button>
-                    ` : ''}
-                </div>
-                <button onclick="viewRequestDetails(${request.id})" class="text-primary hover:underline text-sm">
-                    عرض التفاصيل
-                </button>
-            </div>
-        </div>
-    `).join('');
-}
-
-// Render provider requests (new requests to respond to)
-function renderProviderRequests(requests) {
-    if (!requests || requests.length === 0) {
-        return '<p class="text-gray-500 text-center py-8">لا توجد طلبات جديدة حالياً</p>';
-    }
-
-    return requests.map(request => `
-        <div class="border border-gray-200 rounded-lg p-4 mb-4 last:mb-0">
-            ${request.emergency ? '<div class="emergency-badge mb-3"><i class="fas fa-exclamation-triangle mr-2"></i>طارئ</div>' : ''}
-            
-            <div class="flex justify-between items-start mb-2">
-                <h3 class="font-bold text-gray-900">${request.title}</h3>
-                <span class="text-sm text-green-600 font-bold">${request.budget}</span>
-            </div>
-            
-            <p class="text-gray-600 text-sm mb-2">
-                <i class="fas fa-user mr-2"></i>العميل: ${request.customer_name}
-            </p>
-            
-            <p class="text-gray-600 text-sm mb-2">
-                <i class="fas fa-map-marker-alt mr-2"></i>${request.location}
-            </p>
-            
-            <p class="text-gray-500 text-xs mb-3">${formatDate(request.created_at)}</p>
-            
-            <div class="flex space-x-2 space-x-reverse">
-                <button onclick="respondToRequest(${request.id})" class="btn-primary text-sm px-4 py-2">
-                    <i class="fas fa-reply mr-2"></i>
-                    رد على الطلب
-                </button>
-                <button onclick="viewRequestDetails(${request.id})" class="btn-secondary text-sm px-4 py-2">
-                    التفاصيل
-                </button>
-            </div>
-        </div>
-    `).join('');
-}
-
-// Render favorite providers
-function renderFavoriteProviders(providers) {
-    if (!providers || providers.length === 0) {
-        return '<p class="text-gray-500 text-center py-8">لا توجد مقدمو خدمات مفضلون</p>';
-    }
-
-    return providers.map(provider => `
-        <div class="border border-gray-200 rounded-lg p-4 mb-4 last:mb-0">
-            <div class="flex justify-between items-start mb-2">
-                <h3 class="font-bold text-gray-900">${provider.name}</h3>
-                <div class="rating-stars text-yellow-400">
-                    ${'★'.repeat(Math.floor(provider.rating))}${'☆'.repeat(5 - Math.floor(provider.rating))} ${provider.rating}
-                </div>
-            </div>
-            <p class="text-gray-600 text-sm mb-2">${provider.business_name}</p>
-            <p class="text-gray-600 text-sm mb-3">
-                <i class="fas fa-tools mr-2"></i>${provider.category} • ${provider.total_jobs} عمل مكتمل
-            </p>
-            <div class="flex space-x-2 space-x-reverse">
-                <button onclick="requestFromProvider(${provider.id})" class="btn-primary text-sm px-4 py-2">
-                    طلب خدمة
-                </button>
-                <button onclick="contactProvider(${provider.id})" class="btn-secondary text-sm px-4 py-2">
-                    تواصل
-                </button>
-            </div>
-        </div>
-    `).join('');
-}
-
-// Render recent jobs for provider
-function renderRecentJobs(jobs) {
-    if (!jobs || jobs.length === 0) {
-        return '<p class="text-gray-500 text-center py-8">لا توجد أعمال مكتملة مؤخراً</p>';
-    }
-
-    return jobs.map(job => `
-        <div class="border border-gray-200 rounded-lg p-4 mb-4 last:mb-0">
-            <div class="flex justify-between items-start mb-2">
-                <h3 class="font-bold text-gray-900">${job.title}</h3>
-                <span class="text-green-600 font-bold">${job.earnings} د.أ</span>
-            </div>
-            <p class="text-gray-600 text-sm mb-2">
-                <i class="fas fa-user mr-2"></i>العميل: ${job.customer_name}
-            </p>
-            <div class="flex justify-between items-center">
-                <div class="rating-stars text-yellow-400">
-                    ${'★'.repeat(job.rating_received)}${'☆'.repeat(5 - job.rating_received)} (${job.rating_received}/5)
-                </div>
-                <span class="text-gray-500 text-sm">${formatDate(job.completed_at)}</span>
-            </div>
-        </div>
-    `).join('');
-}
-
-// Initialize earnings chart
-function initializeEarningsChart() {
-    const ctx = document.getElementById('earningsChart')?.getContext('2d');
-    if (!ctx || !dashboardData?.earnings_chart) return;
-
-    new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: dashboardData.earnings_chart.labels,
-            datasets: [{
-                label: 'الأرباح (د.أ)',
-                data: dashboardData.earnings_chart.data,
-                borderColor: '#2563eb',
-                backgroundColor: 'rgba(37, 99, 235, 0.1)',
-                borderWidth: 3,
-                fill: true,
-                tension: 0.4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    ticks: {
-                        callback: function(value) {
-                            return value + ' د.أ';
-                        }
-                    }
-                }
-            }
+        if (messageDiv.parentElement) {
+            messageDiv.remove();
         }
-    });
+    }, 5000);
 }
 
-// Utility functions
-function getStatusClass(status) {
-    const classes = {
-        'pending': 'status-pending',
-        'accepted': 'status-accepted',
-        'in_progress': 'status-in_progress',
-        'completed': 'status-completed',
-        'cancelled': 'status-cancelled'
-    };
-    return classes[status] || 'status-pending';
-}
-
+// Helper functions
 function getStatusText(status) {
     const texts = {
         'pending': 'في الانتظار',
@@ -525,72 +563,76 @@ function getStatusText(status) {
     return texts[status] || 'غير محدد';
 }
 
-function formatDate(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('ar-JO');
-}
-
-// Action functions (placeholders - will be implemented later)
-function requestNewService() {
-    window.location.href = '/#request';
-}
-
-function viewRequestDetails(requestId) {
-    alert(\`سيتم إضافة صفحة تفاصيل الطلب رقم \${requestId} قريباً\`);
-}
-
-function rateService(requestId) {
-    alert(\`سيتم إضافة نظام تقييم الخدمة قريباً\`);
-}
-
+// Placeholder functions
 function respondToRequest(requestId) {
-    const message = prompt('اكتب رسالة للعميل:');
-    const price = prompt('السعر المقترح (دينار أردني):');
-    
-    if (message && price) {
-        // Call API to respond to request
-        alert(\`تم إرسال ردك على الطلب رقم \${requestId}\`);
-    }
+    showMessage('سيتم إضافة نظام الاستجابة للطلبات قريباً', 'info');
 }
 
-function requestFromProvider(providerId) {
-    window.location.href = \`/#provider-\${providerId}\`;
+function showProfile() {
+    showMessage('سيتم إضافة صفحة الملف الشخصي قريباً', 'info');
 }
 
-function contactProvider(providerId) {
-    alert(\`سيتم إضافة نظام المراسلة قريباً\`);
+function showDocumentUpload() {
+    showMessage('سيتم إضافة نظام رفع الوثائق قريباً', 'info');
 }
 
-function logout() {
-    if (confirm('هل تريد تسجيل الخروج؟')) {
-        axios.post('/api/logout').then(() => {
+// Logout function
+async function logout() {
+    try {
+        await axios.post('/api/logout');
+        
+        // Clear auth token from all sources
+        clearAuthToken();
+        
+        currentUser = null;
+        showMessage('تم تسجيل الخروج بنجاح', 'success');
+        setTimeout(() => {
             window.location.href = '/';
-        });
+        }, 1500);
+    } catch (error) {
+        // Still clear local tokens even if server request fails
+        clearAuthToken();
+        currentUser = null;
+        showMessage('تم تسجيل الخروج بنجاح', 'success');
+        setTimeout(() => {
+            window.location.href = '/';
+        }, 1500);
     }
 }
 
-function redirectToLogin() {
-    alert('يرجى تسجيل الدخول للوصول لهذه الصفحة');
-    window.location.href = '/';
+function toggleMobileMenu() {
+    showMessage('القائمة المحمولة قيد التطوير', 'info');
 }
 
-function showError(message) {
-    const errorDiv = document.createElement('div');
-    errorDiv.className = 'fixed top-4 right-4 left-4 md:right-4 md:left-auto md:max-w-md z-50 error-message';
-    errorDiv.innerHTML = \`
-        <div class="flex items-center justify-between">
-            <span>\${message}</span>
-            <button onclick="this.parentElement.parentElement.remove()" class="text-white hover:text-gray-200">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-    \`;
-    
-    document.body.appendChild(errorDiv);
-    
-    setTimeout(() => {
-        if (errorDiv.parentElement) {
-            errorDiv.remove();
-        }
-    }, 5000);
+// User Dropdown Management Functions for Dashboard
+function toggleUserDropdownDashboard() {
+    const dropdown = document.getElementById('user-dropdown-dashboard');
+    if (dropdown) {
+        dropdown.classList.toggle('hidden');
+    }
 }
+
+// Close dropdown when clicking outside - Dashboard version
+document.addEventListener('click', function(event) {
+    const userMenu = document.getElementById('user-menu-dashboard');
+    const dropdown = document.getElementById('user-dropdown-dashboard');
+    const menuButton = document.getElementById('user-menu-button-dashboard');
+    
+    if (dropdown && !dropdown.classList.contains('hidden')) {
+        // If click is outside the user menu area, close the dropdown
+        if (!userMenu.contains(event.target)) {
+            dropdown.classList.add('hidden');
+        }
+    }
+});
+
+// Prevent dropdown from closing when clicking inside it - Dashboard version
+document.addEventListener('click', function(event) {
+    const dropdown = document.getElementById('user-dropdown-dashboard');
+    if (dropdown && dropdown.contains(event.target)) {
+        // Only close if clicking on an actual link (not just the dropdown area)
+        if (event.target.tagName === 'A' || event.target.closest('a')) {
+            dropdown.classList.add('hidden');
+        }
+    }
+});

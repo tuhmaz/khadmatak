@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>اختبار المصادقة</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-md mx-auto bg-white p-6 rounded-lg shadow">
+        <h1 class="text-2xl font-bold mb-6">اختبار نظام المصادقة</h1>
+        
+        <div class="space-y-4">
+            <button onclick="testLogin()" class="w-full bg-blue-500 text-white py-2 px-4 rounded hover:bg-blue-600">
+                <i class="fas fa-sign-in-alt ml-2"></i>
+                اختبار تسجيل الدخول
+            </button>
+            
+            <button onclick="checkAuth()" class="w-full bg-green-500 text-white py-2 px-4 rounded hover:bg-green-600">
+                <i class="fas fa-user ml-2"></i>
+                فحص حالة المصادقة
+            </button>
+            
+            <button onclick="testDashboard()" class="w-full bg-purple-500 text-white py-2 px-4 rounded hover:bg-purple-600">
+                <i class="fas fa-tachometer-alt ml-2"></i>
+                اختبار لوحة التحكم
+            </button>
+            
+            <button onclick="testLogout()" class="w-full bg-red-500 text-white py-2 px-4 rounded hover:bg-red-600">
+                <i class="fas fa-sign-out-alt ml-2"></i>
+                اختبار تسجيل الخروج
+            </button>
+            
+            <a href="/" class="block w-full bg-gray-500 text-white py-2 px-4 rounded hover:bg-gray-600 text-center">
+                <i class="fas fa-home ml-2"></i>
+                الصفحة الرئيسية
+            </a>
+            
+            <a href="/dashboard" class="block w-full bg-orange-500 text-white py-2 px-4 rounded hover:bg-orange-600 text-center">
+                <i class="fas fa-tachometer-alt ml-2"></i>
+                لوحة التحكم
+            </a>
+        </div>
+        
+        <div id="result" class="mt-6 p-4 rounded bg-gray-100"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+    <script src="/static/auth-utils.js"></script>
+    <script>
+        // Configure auth
+        configureAxiosAuth();
+        
+        async function testLogin() {
+            try {
+                const response = await axios.post('/api/login', {
+                    email: 'test@example.com',
+                    password: 'testpass123'
+                });
+                
+                if (response.data.success) {
+                    // Save token
+                    saveAuthToken(response.data.token);
+                    
+                    showResult('تم تسجيل الدخول بنجاح!', 'success');
+                } else {
+                    showResult('فشل تسجيل الدخول: ' + response.data.error, 'error');
+                }
+            } catch (error) {
+                showResult('خطأ: ' + (error.response?.data?.error || error.message), 'error');
+            }
+        }
+        
+        async function checkAuth() {
+            try {
+                const user = await checkAuthenticationStatus();
+                if (user) {
+                    showResult(`مسجل الدخول كـ: ${user.name} (${user.user_type})`, 'success');
+                } else {
+                    showResult('غير مسجل الدخول', 'warning');
+                }
+            } catch (error) {
+                showResult('خطأ في فحص المصادقة: ' + error.message, 'error');
+            }
+        }
+        
+        async function testDashboard() {
+            try {
+                const response = await axios.get('/api/dashboard/customer');
+                if (response.data.success) {
+                    showResult('تم الوصول للوحة التحكم بنجاح!', 'success');
+                } else {
+                    showResult('فشل الوصول للوحة التحكم: ' + response.data.error, 'error');
+                }
+            } catch (error) {
+                showResult('خطأ في لوحة التحكم: ' + (error.response?.data?.error || error.message), 'error');
+            }
+        }
+        
+        async function testLogout() {
+            try {
+                await axios.post('/api/logout');
+                clearAuthToken();
+                showResult('تم تسجيل الخروج بنجاح!', 'success');
+            } catch (error) {
+                // Clear tokens anyway
+                clearAuthToken();
+                showResult('تم تسجيل الخروج (مع تنظيف محلي)', 'warning');
+            }
+        }
+        
+        function showResult(message, type) {
+            const result = document.getElementById('result');
+            const colors = {
+                success: 'bg-green-100 text-green-800',
+                error: 'bg-red-100 text-red-800',
+                warning: 'bg-yellow-100 text-yellow-800'
+            };
+            
+            result.className = `mt-6 p-4 rounded ${colors[type] || 'bg-gray-100'}`;
+            result.textContent = message;
+        }
+        
+        // Check auth on page load
+        document.addEventListener('DOMContentLoaded', checkAuth);
+    </script>
+</body>
+</html>

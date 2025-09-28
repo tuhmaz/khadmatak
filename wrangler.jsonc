@@ -3,14 +3,14 @@
   "name": "jordan-home-services",
   "compatibility_date": "2025-09-28",
   "pages_build_output_dir": "./dist",
-  "compatibility_flags": ["nodejs_compat"]
+  "compatibility_flags": ["nodejs_compat"],
   
-  // D1 Database will be configured later
-  // "d1_databases": [
-  //   {
-  //     "binding": "DB",
-  //     "database_name": "webapp-production",
-  //     "database_id": ""
-  //   }
-  // ]
+  // D1 Database for local development
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "webapp-production",
+      "database_id": "local-dev-db"
+    }
+  ]
 }
