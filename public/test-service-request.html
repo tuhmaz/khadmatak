@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>اختبار طلب الخدمة</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-2xl font-bold mb-6">اختبار نظام طلب الخدمة المحسن</h1>
+        
+        <!-- Login Section -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">تسجيل عميل جديد / تسجيل الدخول</h2>
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                    <h3 class="font-medium mb-2">تسجيل عميل جديد</h3>
+                    <input type="email" id="register_email" placeholder="البريد الإلكتروني" class="w-full p-2 border rounded mb-2" value="testcustomer@test.com">
+                    <input type="password" id="register_password" placeholder="كلمة المرور" class="w-full p-2 border rounded mb-2" value="TestPass123!">
+                    <input type="text" id="register_name" placeholder="الاسم" class="w-full p-2 border rounded mb-2" value="عميل اختبار">
+                    <input type="tel" id="register_phone" placeholder="رقم الهاتف" class="w-full p-2 border rounded mb-2" value="0791234580">
+                    <button onclick="registerCustomer()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 w-full">
+                        تسجيل عميل
+                    </button>
+                </div>
+                <div>
+                    <h3 class="font-medium mb-2">تسجيل الدخول</h3>
+                    <input type="email" id="login_email" placeholder="البريد الإلكتروني" class="w-full p-2 border rounded mb-2" value="testcustomer@test.com">
+                    <input type="password" id="login_password" placeholder="كلمة المرور" class="w-full p-2 border rounded mb-2" value="TestPass123!">
+                    <button onclick="loginUser()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 w-full">
+                        تسجيل الدخول
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Service Request Form -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">نموذج طلب الخدمة</h2>
+            <form id="serviceForm" class="space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block font-medium mb-1">فئة الخدمة *</label>
+                        <select id="category_id" class="w-full p-2 border rounded">
+                            <option value="">اختر فئة الخدمة</option>
+                            <option value="1">سباكة</option>
+                            <option value="2">كهرباء</option>
+                            <option value="3">تنظيف</option>
+                            <option value="4">صيانة عامة</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-medium mb-1">عنوان الطلب *</label>
+                        <input type="text" id="title" class="w-full p-2 border rounded" placeholder="مثال: إصلاح صنبور المطبخ">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-medium mb-1">وصف المطلوب *</label>
+                    <textarea id="description" class="w-full p-2 border rounded" rows="3" placeholder="اشرح تفاصيل المشكلة والخدمة المطلوبة"></textarea>
+                </div>
+
+                <div>
+                    <label class="block font-medium mb-1">عنوان المكان *</label>
+                    <input type="text" id="location_address" class="w-full p-2 border rounded" placeholder="الحي، الشارع، رقم البناء">
+                </div>
+
+                <div class="grid grid-cols-3 gap-4">
+                    <div>
+                        <label class="block font-medium mb-1">التاريخ المفضل</label>
+                        <input type="date" id="preferred_date" class="w-full p-2 border rounded">
+                    </div>
+                    <div>
+                        <label class="block font-medium mb-1">وقت البداية</label>
+                        <input type="time" id="preferred_time_start" class="w-full p-2 border rounded">
+                    </div>
+                    <div>
+                        <label class="block font-medium mb-1">وقت النهاية</label>
+                        <input type="time" id="preferred_time_end" class="w-full p-2 border rounded">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block font-medium mb-1">الميزانية الدنيا (د.أ)</label>
+                        <input type="number" id="budget_min" class="w-full p-2 border rounded" min="0" step="0.5">
+                    </div>
+                    <div>
+                        <label class="block font-medium mb-1">الميزانية العليا (د.أ)</label>
+                        <input type="number" id="budget_max" class="w-full p-2 border rounded" min="0" step="0.5">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="flex items-center">
+                        <input type="checkbox" id="emergency" class="ml-2">
+                        <span>حالة طوارئ</span>
+                    </label>
+                </div>
+
+                <div class="flex gap-4">
+                    <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">
+                        إرسال الطلب
+                    </button>
+                    <button type="button" onclick="testValidation()" class="bg-orange-600 text-white px-6 py-2 rounded hover:bg-orange-700">
+                        اختبار التحقق (فارغ)
+                    </button>
+                    <button type="button" onclick="testInvalidData()" class="bg-red-600 text-white px-6 py-2 rounded hover:bg-red-700">
+                        اختبار بيانات خاطئة
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Test Cases -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">حالات اختبار سريعة</h2>
+            <div class="flex gap-2 flex-wrap">
+                <button onclick="fillValidData()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+                    ملء بيانات صحيحة
+                </button>
+                <button onclick="fillMissingTitle()" class="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700">
+                    عنوان مفقود
+                </button>
+                <button onclick="fillShortDescription()" class="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700">
+                    وصف قصير
+                </button>
+                <button onclick="fillInvalidBudget()" class="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700">
+                    ميزانية خاطئة
+                </button>
+                <button onclick="fillPastDate()" class="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700">
+                    تاريخ في الماضي
+                </button>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div id="results" class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-xl font-semibold mb-4">النتائج والرسائل</h2>
+            <pre id="output" class="bg-gray-100 p-4 rounded text-sm overflow-auto max-h-96"></pre>
+        </div>
+    </div>
+
+    <script>
+        let currentToken = null;
+
+        function log(message) {
+            const output = document.getElementById('output');
+            const timestamp = new Date().toLocaleTimeString('ar-JO');
+            output.textContent += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+            console.log(message);
+        }
+
+        function clearLog() {
+            document.getElementById('output').textContent = '';
+        }
+
+        // Configure axios
+        axios.defaults.withCredentials = true;
+        axios.interceptors.request.use((config) => {
+            if (currentToken) {
+                config.headers.Authorization = `Bearer ${currentToken}`;
+            }
+            return config;
+        });
+
+        async function registerCustomer() {
+            const data = {
+                email: document.getElementById('register_email').value,
+                password: document.getElementById('register_password').value,
+                name: document.getElementById('register_name').value,
+                phone: document.getElementById('register_phone').value,
+                user_type: 'customer',
+                city: 'عمّان'
+            };
+
+            try {
+                const response = await axios.post('/api/register', data);
+                if (response.data.success) {
+                    currentToken = response.data.token;
+                    log('✅ تم تسجيل العميل بنجاح');
+                    log(`ID: ${response.data.user.id}, Type: ${response.data.user.user_type}`);
+                }
+            } catch (error) {
+                log('❌ خطأ في التسجيل: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        async function loginUser() {
+            const data = {
+                email: document.getElementById('login_email').value,
+                password: document.getElementById('login_password').value
+            };
+
+            try {
+                const response = await axios.post('/api/login', data);
+                if (response.data.success) {
+                    currentToken = response.data.token;
+                    log('✅ تم تسجيل الدخول بنجاح');
+                    log(`Name: ${response.data.user.name}, Type: ${response.data.user.user_type}`);
+                }
+            } catch (error) {
+                log('❌ خطأ في تسجيل الدخول: ' + (error.response?.data?.error || error.message));
+            }
+        }
+
+        async function submitServiceRequest() {
+            if (!currentToken) {
+                log('❌ يرجى تسجيل الدخول أولاً');
+                return;
+            }
+
+            const data = {
+                category_id: parseInt(document.getElementById('category_id').value) || null,
+                title: document.getElementById('title').value,
+                description: document.getElementById('description').value,
+                location_address: document.getElementById('location_address').value,
+                preferred_date: document.getElementById('preferred_date').value || null,
+                preferred_time_start: document.getElementById('preferred_time_start').value || null,
+                preferred_time_end: document.getElementById('preferred_time_end').value || null,
+                budget_min: parseFloat(document.getElementById('budget_min').value) || null,
+                budget_max: parseFloat(document.getElementById('budget_max').value) || null,
+                emergency: document.getElementById('emergency').checked,
+                customer_phone: '0791234580'
+            };
+
+            log('🔄 إرسال طلب الخدمة...');
+            log('البيانات المرسلة: ' + JSON.stringify(data, null, 2));
+
+            try {
+                const response = await axios.post('/api/request', data);
+                if (response.data.success) {
+                    log('✅ تم إنشاء طلب الخدمة بنجاح!');
+                    log('رسالة النجاح: ' + response.data.message);
+                    if (response.data.data) {
+                        log('تفاصيل الطلب: ' + JSON.stringify(response.data.data, null, 2));
+                    }
+                }
+            } catch (error) {
+                log('❌ فشل إنشاء طلب الخدمة:');
+                log('Status: ' + error.response?.status);
+                log('خطأ: ' + (error.response?.data?.error || error.message));
+                if (error.response?.data?.missing_fields) {
+                    log('الحقول المفقودة: ' + error.response.data.missing_fields.join('، '));
+                }
+            }
+        }
+
+        // Test functions
+        function fillValidData() {
+            document.getElementById('category_id').value = '1';
+            document.getElementById('title').value = 'إصلاح صنبور المطبخ المتسرب';
+            document.getElementById('description').value = 'يوجد تسرب في صنبور المطبخ ويحتاج لإصلاح عاجل. المياه تتسرب من المقبض العلوي';
+            document.getElementById('location_address').value = 'الجبيهة، شارع الملكة رانيا، عمارة 25، الطابق الثالث';
+            document.getElementById('budget_min').value = '20';
+            document.getElementById('budget_max').value = '50';
+            
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            document.getElementById('preferred_date').value = tomorrow.toISOString().split('T')[0];
+            document.getElementById('preferred_time_start').value = '09:00';
+            document.getElementById('preferred_time_end').value = '12:00';
+            
+            log('تم ملء البيانات الصحيحة');
+        }
+
+        function fillMissingTitle() {
+            fillValidData();
+            document.getElementById('title').value = '';
+            log('تم حذف العنوان لاختبار التحقق');
+        }
+
+        function fillShortDescription() {
+            fillValidData();
+            document.getElementById('description').value = 'قصير';
+            log('تم وضع وصف قصير لاختبار التحقق');
+        }
+
+        function fillInvalidBudget() {
+            fillValidData();
+            document.getElementById('budget_min').value = '100';
+            document.getElementById('budget_max').value = '50';
+            log('تم وضع ميزانية خاطئة لاختبار التحقق');
+        }
+
+        function fillPastDate() {
+            fillValidData();
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            document.getElementById('preferred_date').value = yesterday.toISOString().split('T')[0];
+            log('تم وضع تاريخ في الماضي لاختبار التحقق');
+        }
+
+        function testValidation() {
+            // Clear all fields to test validation
+            document.getElementById('serviceForm').reset();
+            log('تم مسح النموذج لاختبار التحقق من الحقول الفارغة');
+        }
+
+        function testInvalidData() {
+            document.getElementById('category_id').value = '999'; // Invalid category
+            document.getElementById('title').value = 'قص'; // Too short
+            document.getElementById('description').value = 'قصير'; // Too short
+            document.getElementById('location_address').value = 'قص'; // Too short
+            document.getElementById('preferred_date').value = '2020-01-01'; // Past date
+            document.getElementById('preferred_time_start').value = '25:00'; // Invalid time
+            document.getElementById('budget_min').value = '100';
+            document.getElementById('budget_max').value = '50'; // Invalid budget range
+            log('تم ملء بيانات خاطئة لاختبار التحقق');
+        }
+
+        // Form submission
+        document.getElementById('serviceForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            submitServiceRequest();
+        });
+
+        // Initial log
+        log('تم تحميل صفحة اختبار طلب الخدمة');
+        log('يرجى تسجيل الدخول أولاً ثم تجربة إرسال طلب خدمة');
+    </script>
+</body>
+</html>

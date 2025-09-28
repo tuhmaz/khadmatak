@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>اختبار لوحة التحكم مقدم الخدمة</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-2xl font-bold mb-6">اختبار لوحة التحكم مقدم الخدمة</h1>
+        
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">تسجيل مقدم خدمة جديد</h2>
+            <form id="registerForm" class="space-y-4">
+                <input type="email" id="email" placeholder="البريد الإلكتروني" class="w-full p-3 border rounded" value="testprovider2@test.com">
+                <input type="password" id="password" placeholder="كلمة المرور" class="w-full p-3 border rounded" value="TestPass123!">
+                <input type="text" id="name" placeholder="الاسم" class="w-full p-3 border rounded" value="Test Provider 2">
+                <input type="tel" id="phone" placeholder="رقم الهاتف" class="w-full p-3 border rounded" value="0791234571">
+                <button type="submit" class="bg-blue-600 text-white px-6 py-3 rounded hover:bg-blue-700">
+                    تسجيل مقدم خدمة
+                </button>
+            </form>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">اختبار لوحة التحكم</h2>
+            <button id="testDashboard" class="bg-green-600 text-white px-6 py-3 rounded hover:bg-green-700 mb-4">
+                اختبار لوحة التحكم
+            </button>
+            <button id="checkAuth" class="bg-purple-600 text-white px-6 py-3 rounded hover:bg-purple-700 mb-4 ml-4">
+                فحص المصادقة
+            </button>
+        </div>
+
+        <div id="results" class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-xl font-semibold mb-4">النتائج</h2>
+            <pre id="output" class="bg-gray-100 p-4 rounded text-sm overflow-auto max-h-96"></pre>
+        </div>
+    </div>
+
+    <script>
+        let currentToken = null;
+
+        function log(message) {
+            const output = document.getElementById('output');
+            const timestamp = new Date().toLocaleTimeString('ar-JO');
+            output.textContent += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+            console.log(message);
+        }
+
+        function getAuthToken() {
+            // Try localStorage first, then cookie
+            return localStorage.getItem('auth_token') || getCookieValue('auth_token') || currentToken;
+        }
+
+        function getCookieValue(name) {
+            const cookies = document.cookie.split(';');
+            for (let cookie of cookies) {
+                const [cookieName, cookieValue] = cookie.trim().split('=');
+                if (cookieName === name) {
+                    return cookieValue;
+                }
+            }
+            return null;
+        }
+
+        function saveAuthToken(token) {
+            currentToken = token;
+            localStorage.setItem('auth_token', token);
+            
+            const expires = new Date();
+            expires.setTime(expires.getTime() + (24 * 60 * 60 * 1000));
+            document.cookie = `auth_token=${token}; expires=${expires.toUTCString()}; path=/; samesite=strict`;
+            
+            log(`Token saved: ${token.substring(0, 20)}...`);
+        }
+
+        // Configure axios
+        axios.defaults.withCredentials = true;
+        axios.interceptors.request.use((config) => {
+            const token = getAuthToken();
+            if (token) {
+                config.headers.Authorization = `Bearer ${token}`;
+                log(`Request with token: ${token.substring(0, 20)}...`);
+            } else {
+                log('No token available for request');
+            }
+            return config;
+        });
+
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = {
+                email: document.getElementById('email').value,
+                password: document.getElementById('password').value,
+                name: document.getElementById('name').value,
+                phone: document.getElementById('phone').value,
+                user_type: 'provider',
+                city: 'عمّان',
+                address: 'Test Address'
+            };
+
+            try {
+                log('بدء التسجيل...');
+                const response = await axios.post('/api/register', formData);
+                
+                if (response.data.success) {
+                    log('✅ تم التسجيل بنجاح');
+                    log(`User ID: ${response.data.user.id}`);
+                    log(`User Type: ${response.data.user.user_type}`);
+                    log(`Verified: ${response.data.user.verified}`);
+                    
+                    if (response.data.token) {
+                        saveAuthToken(response.data.token);
+                        log('✅ تم حفظ الرمز المميز');
+                    }
+                } else {
+                    log('❌ فشل التسجيل: ' + response.data.error);
+                }
+            } catch (error) {
+                log('❌ خطأ في التسجيل: ' + (error.response?.data?.error || error.message));
+            }
+        });
+
+        document.getElementById('testDashboard').addEventListener('click', async () => {
+            try {
+                const token = getAuthToken();
+                if (!token) {
+                    log('❌ لا يوجد رمز مميز - يرجى التسجيل أولاً');
+                    return;
+                }
+
+                log('بدء اختبار لوحة التحكم...');
+                log(`استخدام الرمز: ${token.substring(0, 20)}...`);
+                
+                const response = await axios.get('/api/dashboard/provider');
+                
+                if (response.data.success) {
+                    log('✅ تم جلب بيانات لوحة التحكم بنجاح');
+                    log('البيانات المستلمة:');
+                    log(JSON.stringify(response.data.data, null, 2));
+                } else {
+                    log('❌ فشل جلب بيانات لوحة التحكم: ' + response.data.error);
+                }
+            } catch (error) {
+                log('❌ خطأ في اختبار لوحة التحكم:');
+                log(`Status: ${error.response?.status}`);
+                log(`Error: ${error.response?.data?.error || error.message}`);
+            }
+        });
+
+        document.getElementById('checkAuth').addEventListener('click', async () => {
+            try {
+                const token = getAuthToken();
+                if (!token) {
+                    log('❌ لا يوجد رمز مميز');
+                    return;
+                }
+
+                log('فحص حالة المصادقة...');
+                
+                const response = await axios.get('/api/me');
+                
+                if (response.data.success) {
+                    log('✅ المصادقة صالحة');
+                    log(`User: ${response.data.user.name}`);
+                    log(`Type: ${response.data.user.user_type}`);
+                    log(`ID: ${response.data.user.id}`);
+                    log(`Verified: ${response.data.user.verified}`);
+                } else {
+                    log('❌ فشل فحص المصادقة');
+                }
+            } catch (error) {
+                log('❌ خطأ في فحص المصادقة:');
+                log(`Status: ${error.response?.status}`);
+                log(`Error: ${error.response?.data?.error || error.message}`);
+            }
+        });
+
+        // Initial log
+        log('تم تحميل صفحة الاختبار');
+    </script>
+</body>
+</html>

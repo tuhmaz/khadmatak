@@ -84,15 +84,40 @@ async function apiCall(endpoint, options = {}) {
 async function apiPost(endpoint, data) {
     try {
         showLoading(true);
+        console.log(`Sending request to /api/${endpoint}:`, data);
+        
         const response = await axios.post(`/api/${endpoint}`, data);
+        
         if (response.data.success) {
-            return response.data.data;
+            return response.data;
         } else {
             throw new Error(response.data.error || 'خطأ في الإرسال');
         }
     } catch (error) {
         console.error(`API Post Error (${endpoint}):`, error);
-        showMessage(error.response?.data?.error || error.message || 'حدث خطأ في الإرسال', 'error');
+        console.error('Error details:', {
+            status: error.response?.status,
+            data: error.response?.data,
+            message: error.message
+        });
+        
+        let errorMessage = 'حدث خطأ في الإرسال';
+        
+        if (error.response?.data?.error) {
+            errorMessage = error.response.data.error;
+        } else if (error.response?.status === 400) {
+            errorMessage = 'خطأ في البيانات المرسلة. تأكد من ملء جميع الحقول المطلوبة بشكل صحيح';
+        } else if (error.response?.status === 401) {
+            errorMessage = 'يرجى تسجيل الدخول أولاً';
+        } else if (error.response?.status === 403) {
+            errorMessage = 'غير مصرح لك بتنفيذ هذا الإجراء';
+        } else if (error.response?.status === 500) {
+            errorMessage = 'حدث خطأ في الخادم. يرجى المحاولة مرة أخرى';
+        } else if (error.message) {
+            errorMessage = error.message;
+        }
+        
+        showMessage(errorMessage, 'error');
         return null;
     } finally {
         showLoading(false);
@@ -333,27 +358,88 @@ function selectCategory(categoryId) {
 async function handleRequestSubmission(e) {
     e.preventDefault();
     
+    // Client-side validation before sending
+    const requiredFields = [
+        { id: 'category_id', name: 'فئة الخدمة' },
+        { id: 'title', name: 'عنوان الطلب' },
+        { id: 'description', name: 'وصف المطلوب' },
+        { id: 'location_address', name: 'عنوان المكان' }
+    ];
+    
+    const errors = [];
+    
+    // Check required fields
+    for (const field of requiredFields) {
+        const element = document.getElementById(field.id);
+        if (!element || !element.value || element.value.trim() === '') {
+            errors.push(`${field.name} مطلوب`);
+            element?.classList.add('border-red-500');
+        } else {
+            element?.classList.remove('border-red-500');
+        }
+    }
+    
+    // Validate field lengths
+    const title = document.getElementById('title')?.value || '';
+    const description = document.getElementById('description')?.value || '';
+    const location_address = document.getElementById('location_address')?.value || '';
+    
+    if (title.length > 0 && title.length < 5) {
+        errors.push('عنوان الطلب يجب أن يكون 5 أحرف على الأقل');
+    }
+    
+    if (description.length > 0 && description.length < 10) {
+        errors.push('وصف المطلوب يجب أن يكون 10 أحرف على الأقل');
+    }
+    
+    if (location_address.length > 0 && location_address.length < 5) {
+        errors.push('عنوان المكان يجب أن يكون واضحاً ومفصلاً');
+    }
+    
+    // Validate budget
+    const budget_min = parseFloat(document.getElementById('budget_min')?.value) || null;
+    const budget_max = parseFloat(document.getElementById('budget_max')?.value) || null;
+    
+    if (budget_min && budget_max && budget_min > budget_max) {
+        errors.push('الحد الأدنى للميزانية لا يمكن أن يكون أكبر من الحد الأقصى');
+    }
+    
+    // Show validation errors
+    if (errors.length > 0) {
+        showMessage('يرجى إصلاح الأخطاء التالية:\n• ' + errors.join('\n• '), 'error');
+        return;
+    }
+    
     const formData = {
-        customer_name: document.getElementById('customer_name').value,
-        customer_phone: document.getElementById('customer_phone').value,
-        customer_email: document.getElementById('customer_email').value,
-        category_id: parseInt(document.getElementById('category_id').value),
-        title: document.getElementById('title').value,
-        description: document.getElementById('description').value,
-        location_address: document.getElementById('location_address').value,
-        preferred_date: document.getElementById('preferred_date').value,
-        preferred_time_start: document.getElementById('preferred_time_start').value,
-        preferred_time_end: document.getElementById('preferred_time_end').value,
-        budget_min: parseFloat(document.getElementById('budget_min').value) || null,
-        budget_max: parseFloat(document.getElementById('budget_max').value) || null,
-        emergency: document.getElementById('emergency').checked
+        customer_name: document.getElementById('customer_name')?.value,
+        customer_phone: document.getElementById('customer_phone')?.value,
+        customer_email: document.getElementById('customer_email')?.value,
+        category_id: parseInt(document.getElementById('category_id')?.value),
+        title: title.trim(),
+        description: description.trim(),
+        location_address: location_address.trim(),
+        preferred_date: document.getElementById('preferred_date')?.value || null,
+        preferred_time_start: document.getElementById('preferred_time_start')?.value || null,
+        preferred_time_end: document.getElementById('preferred_time_end')?.value || null,
+        budget_min: budget_min,
+        budget_max: budget_max,
+        emergency: document.getElementById('emergency')?.checked || false
     };
     
+    console.log('Submitting service request:', formData);
+    
     const result = await apiPost('request', formData);
-    if (result) {
+    if (result && result.success) {
         closeModal();
-        showMessage(result.message, 'success');
-        loadRequests(); // Refresh requests list
+        showMessage(result.message || 'تم إنشاء طلب الخدمة بنجاح!', 'success');
+        
+        // Reset form
+        document.getElementById('request-form')?.reset();
+        
+        // Refresh requests list if function exists
+        if (typeof loadRequests === 'function') {
+            loadRequests();
+        }
     }
 }
 
@@ -385,13 +471,16 @@ function showMessage(message, type = 'info') {
         existingMessage.remove();
     }
     
+    // Handle multiline messages
+    const formattedMessage = message.replace(/\n/g, '<br>');
+    
     // Create new message
     const messageDiv = document.createElement('div');
     messageDiv.className = `message-alert fixed top-4 right-4 left-4 md:right-4 md:left-auto md:max-w-md z-50 ${type === 'success' ? 'success-message' : 'error-message'}`;
     messageDiv.innerHTML = `
-        <div class="flex items-center justify-between">
-            <span>${message}</span>
-            <button onclick="this.parentElement.parentElement.remove()" class="text-white hover:text-gray-200">
+        <div class="flex items-start justify-between">
+            <div class="flex-1" style="white-space: pre-line; line-height: 1.4;">${formattedMessage}</div>
+            <button onclick="this.parentElement.parentElement.remove()" class="text-white hover:text-gray-200 mr-2 flex-shrink-0">
                 <i class="fas fa-times"></i>
             </button>
         </div>

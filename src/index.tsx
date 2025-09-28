@@ -1268,85 +1268,207 @@ app.post('/api/request', authMiddleware, async (c) => {
     }
     
     const requestData = await c.req.json();
+    console.log('Service request data received:', requestData);
+    
     const { 
       category_id, title, description, location_address,
       preferred_date, preferred_time_start, preferred_time_end,
-      budget_min, budget_max, emergency, customer_phone
+      budget_min, budget_max, emergency
     } = requestData;
     
-    // Validate required fields
-    if (!category_id || !title || !description || !location_address) {
+    // Detailed validation with specific error messages
+    const missingFields = [];
+    
+    if (!category_id) missingFields.push('فئة الخدمة');
+    if (!title || title.trim() === '') missingFields.push('عنوان الطلب');
+    if (!description || description.trim() === '') missingFields.push('وصف المطلوب');
+    if (!location_address || location_address.trim() === '') missingFields.push('عنوان المكان');
+    
+    if (missingFields.length > 0) {
       return c.json({ 
         success: false, 
-        error: 'جميع الحقول المطلوبة يجب ملؤها' 
+        error: `يرجى ملء الحقول المطلوبة: ${missingFields.join('، ')}`,
+        missing_fields: missingFields
       }, 400);
     }
     
-    // Validate category exists
+    // Validate field lengths
+    if (title.length < 5) {
+      return c.json({ 
+        success: false, 
+        error: 'عنوان الطلب يجب أن يكون 5 أحرف على الأقل' 
+      }, 400);
+    }
+    
+    if (description.length < 10) {
+      return c.json({ 
+        success: false, 
+        error: 'وصف المطلوب يجب أن يكون 10 أحرف على الأقل' 
+      }, 400);
+    }
+    
+    if (location_address.length < 5) {
+      return c.json({ 
+        success: false, 
+        error: 'عنوان المكان يجب أن يكون واضحاً ومفصلاً (5 أحرف على الأقل)' 
+      }, 400);
+    }
+    
+    // Validate budget range if provided
+    if (budget_min && budget_max && budget_min > budget_max) {
+      return c.json({ 
+        success: false, 
+        error: 'الحد الأدنى للميزانية لا يمكن أن يكون أكبر من الحد الأقصى' 
+      }, 400);
+    }
+    
+    // Validate category exists and is active
     const category = await env.DB.prepare(
-      'SELECT id FROM categories WHERE id = ? AND active = true'
-    ).bind(category_id).first();
+      'SELECT id, name_ar FROM categories WHERE id = ? AND active = true'
+    ).bind(category_id).first() as any;
     
     if (!category) {
       return c.json({ 
         success: false, 
-        error: 'فئة الخدمة المحددة غير صالحة' 
+        error: 'فئة الخدمة المحددة غير صالحة أو غير متوفرة حالياً' 
       }, 400);
     }
     
-    // Create service request
-    const result = await env.DB.prepare(`
-      INSERT INTO service_requests (
-        customer_id, category_id, title, description, 
-        location_address, preferred_date, preferred_time_start, 
-        preferred_time_end, budget_min, budget_max, 
-        emergency, customer_phone, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-    `).bind(
-      user.id,
-      category_id,
-      title,
-      description,
-      location_address,
-      preferred_date || null,
-      preferred_time_start || null,
-      preferred_time_end || null,
-      budget_min || null,
-      budget_max || null,
-      emergency ? 1 : 0,
-      customer_phone || null
-    ).run();
+    // Validate date format if provided
+    if (preferred_date) {
+      const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+      if (!datePattern.test(preferred_date)) {
+        return c.json({ 
+          success: false, 
+          error: 'تاريخ الخدمة المفضل غير صالح. استخدم تنسيق: YYYY-MM-DD' 
+        }, 400);
+      }
+      
+      const requestedDate = new Date(preferred_date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      if (requestedDate < today) {
+        return c.json({ 
+          success: false, 
+          error: 'لا يمكن اختيار تاريخ في الماضي' 
+        }, 400);
+      }
+    }
     
-    if (result.success) {
-      // Get the created request with category name
-      const createdRequest = await env.DB.prepare(`
-        SELECT 
-          sr.id, sr.title, sr.description, sr.location_address,
-          sr.preferred_date, sr.preferred_time_start, sr.preferred_time_end,
-          sr.budget_min, sr.budget_max, sr.emergency, sr.status,
-          sr.created_at,
-          c.name_ar as category_name,
-          u.name as customer_name
-        FROM service_requests sr
-        JOIN categories c ON sr.category_id = c.id
-        JOIN users u ON sr.customer_id = u.id
-        WHERE sr.id = ?
-      `).bind(result.meta.last_row_id).first();
+    // Validate time format if provided
+    if (preferred_time_start) {
+      const timePattern = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+      if (!timePattern.test(preferred_time_start)) {
+        return c.json({ 
+          success: false, 
+          error: 'وقت البداية المفضل غير صالح. استخدم تنسيق: HH:MM' 
+        }, 400);
+      }
+    }
+    
+    if (preferred_time_end) {
+      const timePattern = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+      if (!timePattern.test(preferred_time_end)) {
+        return c.json({ 
+          success: false, 
+          error: 'وقت النهاية المفضل غير صالح. استخدم تنسيق: HH:MM' 
+        }, 400);
+      }
+    }
+    
+    // Create service request
+    try {
+      const result = await env.DB.prepare(`
+        INSERT INTO service_requests (
+          customer_id, category_id, title, description, 
+          location_address, preferred_date, preferred_time_start, 
+          preferred_time_end, budget_min, budget_max, 
+          emergency, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+      `).bind(
+        user.id,
+        category_id,
+        title.trim(),
+        description.trim(),
+        location_address.trim(),
+        preferred_date || null,
+        preferred_time_start || null,
+        preferred_time_end || null,
+        budget_min || null,
+        budget_max || null,
+        emergency ? 1 : 0
+      ).run();
+      
+      if (result.success && result.meta.last_row_id) {
+        // Get the created request with category name
+        const createdRequest = await env.DB.prepare(`
+          SELECT 
+            sr.id, sr.title, sr.description, sr.location_address,
+            sr.preferred_date, sr.preferred_time_start, sr.preferred_time_end,
+            sr.budget_min, sr.budget_max, sr.emergency, sr.status,
+            sr.created_at,
+            c.name_ar as category_name,
+            u.name as customer_name
+          FROM service_requests sr
+          JOIN categories c ON sr.category_id = c.id
+          JOIN users u ON sr.customer_id = u.id
+          WHERE sr.id = ?
+        `).bind(result.meta.last_row_id).first();
+        
+        console.log('Service request created successfully:', result.meta.last_row_id);
+        
+        return c.json({ 
+          success: true, 
+          message: `تم إنشاء طلب الخدمة بنجاح! رقم الطلب: ${result.meta.last_row_id}`,
+          data: createdRequest
+        });
+      } else {
+        console.error('Database insert failed:', result);
+        return c.json({ 
+          success: false, 
+          error: 'فشل في حفظ طلب الخدمة في قاعدة البيانات. يرجى المحاولة مرة أخرى' 
+        }, 500);
+      }
+      
+    } catch (dbError) {
+      console.error('Database error during service request creation:', dbError);
+      
+      // Check for specific database errors
+      if (dbError.message && dbError.message.includes('FOREIGN KEY')) {
+        return c.json({ 
+          success: false, 
+          error: 'خطأ في ربط البيانات. تأكد من صحة فئة الخدمة المحددة' 
+        }, 400);
+      }
+      
+      if (dbError.message && dbError.message.includes('NOT NULL')) {
+        return c.json({ 
+          success: false, 
+          error: 'يوجد حقول مطلوبة لم يتم ملؤها بشكل صحيح' 
+        }, 400);
+      }
       
       return c.json({ 
-        success: true, 
-        message: 'تم إنشاء طلب الخدمة بنجاح!',
-        data: createdRequest
-      });
-    } else {
-      throw new Error('فشل في إنشاء طلب الخدمة');
+        success: false, 
+        error: 'حدث خطأ في قاعدة البيانات: ' + (dbError.message || 'خطأ غير معروف') 
+      }, 500);
     }
     
   } catch (error) {
     console.error('Error creating service request:', error);
+    
+    // Handle JSON parsing errors
+    if (error.message && error.message.includes('JSON')) {
+      return c.json({ 
+        success: false, 
+        error: 'خطأ في تنسيق البيانات المرسلة. تأكد من ملء النموذج بشكل صحيح' 
+      }, 400);
+    }
+    
     return c.json({ 
       success: false, 
-      error: 'حدث خطأ في إنشاء طلب الخدمة' 
+      error: 'حدث خطأ غير متوقع في إنشاء طلب الخدمة: ' + (error.message || 'خطأ غير معروف')
     }, 500);
   }
 });

@@ -51,6 +51,7 @@ async function initializeDashboard() {
 async function checkAuthStatus() {
     try {
         currentUser = await checkAuthenticationStatus();
+        console.log('Auth check result:', currentUser);
     } catch (error) {
         console.log('Auth check error:', error);
         currentUser = null;
@@ -102,6 +103,12 @@ async function loadCustomerDashboard() {
 async function loadProviderDashboard() {
     try {
         showMessage('جاري تحميل بيانات لوحة التحكم...', 'info');
+        
+        // Debug: Check current user and authentication
+        console.log('Current user before dashboard call:', currentUser);
+        const token = getAuthToken();
+        console.log('Current token:', token ? 'Present' : 'Missing');
+        
         const response = await axios.get('/api/dashboard/provider');
         if (response.data.success) {
             console.log('Provider dashboard data loaded:', response.data.data);
@@ -112,6 +119,11 @@ async function loadProviderDashboard() {
         }
     } catch (error) {
         console.error('Error loading provider dashboard:', error);
+        console.error('Error details:', {
+            status: error.response?.status,
+            data: error.response?.data,
+            message: error.message
+        });
         showMessage('حدث خطأ في تحميل بيانات مقدم الخدمة: ' + (error.response?.data?.error || error.message), 'error');
         showErrorContent();
     }
