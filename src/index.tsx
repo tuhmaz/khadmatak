@@ -2710,4 +2710,9 @@ app.get('/', (c) => {
         <script src="/static/app.js"></script>\n    </body>\n    </html>\n  `)
 })
 
+// Favicon route to prevent 500 errors
+app.get('/favicon.ico', (c) => {
+  return c.notFound()
+})
+
 export default app
