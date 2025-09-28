@@ -152,9 +152,54 @@ export interface Notification {
   created_at: string;
 }
 
+// Authentication interfaces
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  name: string;
+  phone: string;
+  user_type: 'customer' | 'provider';
+  address?: string;
+  city?: string;
+}
+
+export interface ProviderRegistrationRequest extends RegisterRequest {
+  business_name?: string;
+  bio_ar?: string;
+  bio_en?: string;
+  experience_years?: number;
+  license_number?: string;
+  service_categories: number[];
+  working_hours?: any;
+  service_areas?: string[];
+  portfolio_images?: string[];
+}
+
+export interface UserSession {
+  id: number;
+  email: string;
+  name: string;
+  user_type: 'customer' | 'provider' | 'admin';
+  verified: boolean;
+}
+
+export interface AuthResponse {
+  success: boolean;
+  message: string;
+  user?: UserSession;
+  token?: string;
+  error?: string;
+}
+
 // Cloudflare Workers Environment
 export interface Env {
   DB: D1Database;
+  JWT_SECRET: string;
   // KV?: KVNamespace;
   // R2?: R2Bucket;
 }

@@ -5,12 +5,16 @@ let categories = [];
 let providers = [];
 let requests = [];
 let selectedCategory = null;
+let currentUser = null;
+let currentAccountType = 'customer';
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
     loadCategories();
     loadProviders();
     loadRequests();
+    checkAuthStatus();
+    setupAuthForms();
 });
 
 // API functions
@@ -503,9 +507,379 @@ document.addEventListener('click', function(e) {
     }
 });
 
-// Add escape key to close modal
+// Authentication Functions
+
+// Check if user is logged in
+async function checkAuthStatus() {
+    try {
+        const response = await axios.get('/api/me');
+        if (response.data.success) {
+            currentUser = response.data.user;
+            updateAuthUI();
+        }
+    } catch (error) {
+        // User not logged in - this is fine
+        currentUser = null;
+        updateAuthUI();
+    }
+}
+
+// Update UI based on authentication status
+function updateAuthUI() {
+    const authButtons = document.getElementById('auth-buttons');
+    const userMenu = document.getElementById('user-menu');
+    const userName = document.getElementById('user-name');
+    
+    if (currentUser) {
+        authButtons.classList.add('hidden');
+        userMenu.classList.remove('hidden');
+        userMenu.classList.add('flex');
+        userName.textContent = currentUser.name;
+        
+        // Show user type badge
+        const userTypeIcon = currentUser.user_type === 'provider' ? 'fas fa-briefcase' : 'fas fa-user';
+        userName.innerHTML = `<i class="${userTypeIcon} ml-2"></i>${currentUser.name}`;
+    } else {
+        authButtons.classList.remove('hidden');
+        userMenu.classList.add('hidden');
+        userMenu.classList.remove('flex');
+    }
+}
+
+// Show login modal
+function showLoginModal() {
+    const modal = document.getElementById('login-modal');
+    modal.classList.remove('hidden');
+    modal.classList.add('modal-enter');
+}
+
+// Show register modal
+function showRegisterModal(accountType = 'customer') {
+    currentAccountType = accountType;
+    const modal = document.getElementById('register-modal');
+    switchAccountType(accountType);
+    modal.classList.remove('hidden');
+    modal.classList.add('modal-enter');
+}
+
+// Switch between login and register
+function switchToRegister() {
+    document.getElementById('login-modal').classList.add('hidden');
+    showRegisterModal(currentAccountType);
+}
+
+function switchToLogin() {
+    document.getElementById('register-modal').classList.add('hidden');
+    showLoginModal();
+}
+
+// Close authentication modals
+function closeAuthModal() {
+    document.getElementById('login-modal').classList.add('hidden');
+    document.getElementById('register-modal').classList.add('hidden');
+}
+
+// Switch account type in registration
+function switchAccountType(type) {
+    currentAccountType = type;
+    const customerTab = document.getElementById('customer-tab');
+    const providerTab = document.getElementById('provider-tab');
+    const providerFields = document.getElementById('provider-fields');
+    const registerTitle = document.getElementById('register-title');
+    
+    if (type === 'customer') {
+        customerTab.className = 'flex-1 py-2 px-4 rounded-md font-medium transition-colors bg-white text-primary shadow-sm';
+        providerTab.className = 'flex-1 py-2 px-4 rounded-md font-medium transition-colors text-gray-600 hover:text-gray-800';
+        providerFields.classList.add('hidden');
+        registerTitle.textContent = 'إنشاء حساب عميل';
+    } else {
+        providerTab.className = 'flex-1 py-2 px-4 rounded-md font-medium transition-colors bg-white text-primary shadow-sm';
+        customerTab.className = 'flex-1 py-2 px-4 rounded-md font-medium transition-colors text-gray-600 hover:text-gray-800';
+        providerFields.classList.remove('hidden');
+        registerTitle.textContent = 'إنشاء حساب مقدم خدمة';
+        loadServiceCategoriesForRegistration();
+    }
+}
+
+// Load service categories for provider registration
+function loadServiceCategoriesForRegistration() {
+    const container = document.getElementById('service-categories-checkboxes');
+    if (!container || !categories.length) return;
+    
+    container.innerHTML = categories.map(category => `
+        <label class="flex items-center p-2 border rounded-lg hover:bg-gray-50 cursor-pointer">
+            <input type="checkbox" name="service_categories" value="${category.id}" class="ml-2">
+            <span class="text-2xl ml-2">${category.icon}</span>
+            <span class="text-sm font-medium">${category.name_ar}</span>
+        </label>
+    `).join('');
+}
+
+// Toggle password visibility
+function togglePassword(inputId) {
+    const input = document.getElementById(inputId);
+    const icon = input.nextElementSibling.querySelector('i');
+    
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.className = 'fas fa-eye-slash';
+    } else {
+        input.type = 'password';
+        icon.className = 'fas fa-eye';
+    }
+}
+
+// Setup authentication forms
+function setupAuthForms() {
+    // Login form
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const email = document.getElementById('login_email').value;
+        const password = document.getElementById('login_password').value;
+        
+        if (!email || !password) {
+            showMessage('يرجى إدخال البريد الإلكتروني وكلمة المرور', 'error');
+            return;
+        }
+        
+        try {
+            const response = await axios.post('/api/login', { email, password });
+            
+            if (response.data.success) {
+                currentUser = response.data.user;
+                closeAuthModal();
+                updateAuthUI();
+                showMessage(response.data.message, 'success');
+            } else {
+                showMessage(response.data.error, 'error');
+            }
+        } catch (error) {
+            showMessage(error.response?.data?.error || 'حدث خطأ في تسجيل الدخول', 'error');
+        }
+    });
+    
+    // Register form
+    document.getElementById('register-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const formData = {
+            name: document.getElementById('register_name').value,
+            email: document.getElementById('register_email').value,
+            phone: document.getElementById('register_phone').value,
+            password: document.getElementById('register_password').value,
+            city: document.getElementById('register_city').value,
+            address: document.getElementById('register_address').value,
+            user_type: currentAccountType
+        };
+        
+        // Validate required fields
+        if (!formData.name || !formData.email || !formData.phone || !formData.password) {
+            showMessage('يرجى إدخال جميع البيانات المطلوبة', 'error');
+            return;
+        }
+        
+        // Check terms agreement
+        if (!document.getElementById('agree_terms').checked) {
+            showMessage('يجب الموافقة على شروط الاستخدام', 'error');
+            return;
+        }
+        
+        // Provider-specific data
+        if (currentAccountType === 'provider') {
+            const selectedCategories = Array.from(document.querySelectorAll('input[name="service_categories"]:checked'))
+                                           .map(checkbox => parseInt(checkbox.value));
+            
+            if (selectedCategories.length === 0) {
+                showMessage('يرجى اختيار فئة واحدة على الأقل من الخدمات', 'error');
+                return;
+            }
+            
+            formData.business_name = document.getElementById('business_name').value;
+            formData.bio_ar = document.getElementById('bio_ar').value;
+            formData.experience_years = parseInt(document.getElementById('experience_years').value) || 0;
+            formData.license_number = document.getElementById('license_number').value;
+            formData.service_categories = selectedCategories;
+        }
+        
+        try {
+            const endpoint = currentAccountType === 'provider' ? '/api/register/provider' : '/api/register';
+            const response = await axios.post(endpoint, formData);
+            
+            if (response.data.success) {
+                currentUser = response.data.user;
+                closeAuthModal();
+                updateAuthUI();
+                showMessage(response.data.message, 'success');
+            } else {
+                showMessage(response.data.error, 'error');
+            }
+        } catch (error) {
+            showMessage(error.response?.data?.error || 'حدث خطأ في إنشاء الحساب', 'error');
+        }
+    });
+}
+
+// Logout function
+async function logout() {
+    try {
+        await axios.post('/api/logout');
+        currentUser = null;
+        updateAuthUI();
+        showMessage('تم تسجيل الخروج بنجاح', 'success');
+    } catch (error) {
+        showMessage('حدث خطأ في تسجيل الخروج', 'error');
+    }
+}
+
+// Show profile (placeholder)
+function showProfile() {
+    showMessage('سيتم إضافة صفحة الملف الشخصي قريباً', 'info');
+}
+
+// Show dashboard
+function showDashboard() {
+    if (currentUser) {
+        window.location.href = '/dashboard';
+    } else {
+        showMessage('يرجى تسجيل الدخول أولاً', 'warning');
+        showLoginModal();
+    }
+}
+
+// Update request form to check authentication
+function showRequestForm() {
+    if (!currentUser) {
+        showMessage('يرجى تسجيل الدخول أولاً لطلب خدمة', 'warning');
+        showLoginModal();
+        return;
+    }
+    
+    if (currentUser.user_type !== 'customer') {
+        showMessage('يمكن للعملاء فقط طلب خدمات. مقدمو الخدمات يمكنهم الرد على الطلبات', 'info');
+        return;
+    }
+    
+    // Original showRequestForm logic
+    const modal = document.getElementById('request-modal');
+    const form = document.getElementById('request-form');
+    
+    // Populate form with user data
+    form.innerHTML = `
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="form-label">الاسم *</label>
+                <input type="text" id="customer_name" class="form-input" required value="${currentUser.name}" readonly>
+            </div>
+            <div>
+                <label class="form-label">رقم الهاتف *</label>
+                <input type="tel" id="customer_phone" class="form-input" required placeholder="سيتم جلبه من الملف الشخصي">
+            </div>
+        </div>
+        
+        <div>
+            <label class="form-label">البريد الإلكتروني</label>
+            <input type="email" id="customer_email" class="form-input" value="${currentUser.email}" readonly>
+        </div>
+        
+        <div>
+            <label class="form-label">نوع الخدمة *</label>
+            <select id="category_id" class="form-input" required>
+                <option value="">اختر نوع الخدمة</option>
+                ${categories.map(cat => `<option value="${cat.id}" ${selectedCategory === cat.id ? 'selected' : ''}>${cat.name_ar}</option>`).join('')}
+            </select>
+        </div>
+        
+        <div>
+            <label class="form-label">عنوان المشكلة *</label>
+            <input type="text" id="title" class="form-input" placeholder="مثال: تسريب في حمام الضيوف" required>
+        </div>
+        
+        <div>
+            <label class="form-label">وصف تفصيلي للمشكلة *</label>
+            <textarea id="description" class="form-input" rows="4" placeholder="اشرح المشكلة بالتفصيل..." required></textarea>
+        </div>
+        
+        <div>
+            <label class="form-label">العنوان *</label>
+            <input type="text" id="location_address" class="form-input" placeholder="الحي، الشارع، رقم البناية" required>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+                <label class="form-label">التاريخ المفضل</label>
+                <input type="date" id="preferred_date" class="form-input">
+            </div>
+            <div>
+                <label class="form-label">من الساعة</label>
+                <input type="time" id="preferred_time_start" class="form-input">
+            </div>
+            <div>
+                <label class="form-label">إلى الساعة</label>
+                <input type="time" id="preferred_time_end" class="form-input">
+            </div>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="form-label">الحد الأدنى للميزانية (دينار)</label>
+                <input type="number" id="budget_min" class="form-input" min="0">
+            </div>
+            <div>
+                <label class="form-label">الحد الأقصى للميزانية (دينار)</label>
+                <input type="number" id="budget_max" class="form-input" min="0">
+            </div>
+        </div>
+        
+        <div>
+            <label class="flex items-center">
+                <input type="checkbox" id="emergency" class="ml-2">
+                <span class="form-label mb-0">هذا طلب طارئ</span>
+            </label>
+        </div>
+        
+        <div class="flex space-x-4 space-x-reverse">
+            <button type="submit" class="btn-primary flex-1">
+                <i class="fas fa-paper-plane ml-2"></i>
+                إرسال الطلب
+            </button>
+            <button type="button" onclick="closeModal()" class="btn-secondary">
+                إلغاء
+            </button>
+        </div>
+    `;
+    
+    // Handle form submission
+    form.addEventListener('submit', handleRequestSubmission);
+    
+    modal.classList.remove('hidden');
+    modal.classList.add('modal-enter');
+    
+    // Set minimum date to today
+    const dateInput = document.getElementById('preferred_date');
+    if (dateInput) {
+        dateInput.min = new Date().toISOString().split('T')[0];
+    }
+}
+
+// Add escape key to close modals
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         closeModal();
+        closeAuthModal();
+    }
+});
+
+// Add click outside modal to close
+document.addEventListener('click', function(e) {
+    const requestModal = document.getElementById('request-modal');
+    const loginModal = document.getElementById('login-modal');
+    const registerModal = document.getElementById('register-modal');
+    
+    if (e.target === requestModal) {
+        closeModal();
+    }
+    if (e.target === loginModal || e.target === registerModal) {
+        closeAuthModal();
     }
 });

@@ -20,7 +20,9 @@
     "db:console:prod": "wrangler d1 execute webapp-production"
   },
   "dependencies": {
-    "hono": "^4.9.9"
+    "bcryptjs": "^3.0.2",
+    "hono": "^4.9.9",
+    "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20250705.0",
