@@ -68,6 +68,45 @@ function updateDocumentsUI() {
     if (currentUser && userNameElement) {
         userNameElement.innerHTML = `<i class="fas fa-briefcase ml-2"></i>${currentUser.name}`;
     }
+    
+    // Update dashboard links based on user type
+    updateDashboardLinksDocuments();
+}
+
+// Update dashboard links in documents page based on user type
+function updateDashboardLinksDocuments() {
+    // Get all dashboard links in documents page
+    const dashboardLinks = document.querySelectorAll('a[href="/dashboard"]');
+    
+    if (currentUser && dashboardLinks.length > 0) {
+        let dashboardUrl = '/dashboard';
+        let dashboardText = 'لوحة التحكم';
+        let dashboardIcon = 'fas fa-tachometer-alt';
+        
+        // Set dashboard URL based on user type
+        if (currentUser.user_type === 'admin') {
+            dashboardUrl = '/admin';
+            dashboardText = 'لوحة الإدارة';
+            dashboardIcon = 'fas fa-shield-alt';
+        } else if (currentUser.user_type === 'provider') {
+            dashboardUrl = '/dashboard';
+            dashboardText = 'لوحة المزود';
+            dashboardIcon = 'fas fa-briefcase';
+        } else if (currentUser.user_type === 'customer') {
+            dashboardUrl = '/dashboard';
+            dashboardText = 'لوحة العميل';
+            dashboardIcon = 'fas fa-user';
+        }
+        
+        // Update all dashboard links
+        dashboardLinks.forEach(link => {
+            link.href = dashboardUrl;
+            link.innerHTML = `
+                <i class="${dashboardIcon} ml-2"></i>
+                ${dashboardText}
+            `;
+        });
+    }
 }
 
 // Load user documents
