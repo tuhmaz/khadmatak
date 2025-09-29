@@ -14,7 +14,7 @@
 - **الموقع الرئيسي**: https://3000-i2n4dz157r4ny13hsjf0h-6532622b.e2b.dev
 - **لوحة الإدارة**: https://3000-i2n4dz157r4ny13hsjf0h-6532622b.e2b.dev/admin
 - **واجهة برمجة التطبيقات**: https://3000-i2n4dz157r4ny13hsjf0h-6532622b.e2b.dev/api/
-- **GitHub**: (سيتم الربط عند النشر على GitHub)
+- **GitHub**: https://github.com/tuhmaz/khadmatak
 
 ## هيكل البيانات والتخزين
 ### قاعدة البيانات (Cloudflare D1)
