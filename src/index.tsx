@@ -48,12 +48,37 @@ const authMiddleware = async (c: any, next: any) => {
   }
   
   try {
-    const payload = await verifyJWT(token, JWT_SECRET);
+    const payload = await verifyJWT(token);
     if (!payload) {
+      console.log('JWT verification failed for token:', token.substring(0, 50) + '...');
       return c.json({ success: false, error: 'الجلسة غير صالحة' }, 401);
     }
+    console.log('JWT verified successfully for user:', payload.id);
     
-    c.set('user', payload);
+    // CRITICAL: Check if user is still active in database
+    const { env } = c;
+    const currentUser = await env.DB.prepare(
+      'SELECT id, email, name, user_type, active, verified FROM users WHERE id = ? AND active = true'
+    ).bind(payload.id).first() as any;
+    
+    if (!currentUser) {
+      // User has been deactivated or doesn't exist
+      return c.json({ 
+        success: false, 
+        error: 'تم تعطيل حسابك. يرجى التواصل مع الإدارة' 
+      }, 403);
+    }
+    
+    // Update payload with fresh data from database
+    c.set('user', {
+      id: currentUser.id,
+      email: currentUser.email,
+      name: currentUser.name,
+      user_type: currentUser.user_type,
+      verified: currentUser.verified,
+      active: currentUser.active
+    });
+    
     await next();
   } catch (error) {
     return c.json({ success: false, error: 'خطأ في التحقق من الهوية' }, 401);
@@ -259,16 +284,75 @@ app.post('/api/admin/users/:userId/status', authMiddleware, async (c) => {
       }, 400);
     }
 
+    // Get user information before update
+    const targetUser = await env.DB.prepare(`
+      SELECT id, name, email, user_type FROM users WHERE id = ?
+    `).bind(userId).first() as any;
+    
+    if (!targetUser) {
+      return c.json({ 
+        success: false, 
+        error: 'المستخدم غير موجود' 
+      }, 404);
+    }
+
+    // Update user status
     await env.DB.prepare(`
       UPDATE users 
       SET active = ?, updated_at = CURRENT_TIMESTAMP 
       WHERE id = ?
     `).bind(active, userId).run();
 
+    // If deactivating a provider, also update their provider profile
+    if (!active && targetUser.user_type === 'provider') {
+      await env.DB.prepare(`
+        UPDATE provider_profiles 
+        SET available = false, updated_at = CURRENT_TIMESTAMP 
+        WHERE user_id = ?
+      `).bind(userId).run();
+      
+      // Cancel any pending service requests assigned to this provider
+      await env.DB.prepare(`
+        UPDATE service_requests 
+        SET status = 'cancelled', 
+            assigned_provider_id = NULL,
+            updated_at = CURRENT_TIMESTAMP 
+        WHERE assigned_provider_id = ? AND status IN ('pending', 'in_progress')
+      `).bind(userId).run();
+      
+      // Add notification for affected customers about cancelled requests
+      const affectedRequests = await env.DB.prepare(`
+        SELECT sr.id, sr.customer_id, sr.title 
+        FROM service_requests sr 
+        WHERE sr.assigned_provider_id = ? AND sr.status = 'cancelled'
+      `).bind(userId).all() as any;
+      
+      // Insert notifications for customers
+      for (const request of affectedRequests.results || []) {
+        await env.DB.prepare(`
+          INSERT INTO notifications (user_id, title, message, type, related_id, related_type)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(
+          request.customer_id,
+          'تم إلغاء الطلب',
+          `تم إلغاء طلبك "${request.title}" بسبب تعطيل مقدم الخدمة. يمكنك إنشاء طلب جديد.`,
+          'warning',
+          request.id,
+          'request'
+        ).run();
+      }
+    }
+
     const action = active ? 'تفعيل' : 'إلغاء تفعيل';
+    let message = `تم ${action} المستخدم ${targetUser.name} بنجاح`;
+    
+    if (!active && targetUser.user_type === 'provider') {
+      message += '. تم أيضاً إلغاء الطلبات المعلقة وإشعار العملاء المتأثرين';
+    }
+    
     return c.json({ 
       success: true, 
-      message: `تم ${action} المستخدم بنجاح` 
+      message: message
     });
 
   } catch (error) {
@@ -500,8 +584,9 @@ app.post('/api/register', async (c) => {
 
     try {
       // Determine user type (default to 'customer' if not specified)
-      const actualUserType = user_type === 'provider' ? 'provider' : 'customer';
-      const isVerified = actualUserType === 'customer'; // Customers are auto-verified, providers need verification
+      const actualUserType = user_type === 'provider' ? 'provider' : 
+                            user_type === 'admin' ? 'admin' : 'customer';
+      const isVerified = actualUserType !== 'provider'; // Only providers need verification
       
       // Create user record
       const result = await env.DB.prepare(`
@@ -749,7 +834,7 @@ app.post('/api/provider/upload-documents', async (c) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const decoded = await verifyJWT(token, JWT_SECRET);
+    const decoded = await verifyJWT(token);
     
     if (!decoded || decoded.user_type !== 'provider') {
       return c.json({ 
@@ -872,7 +957,7 @@ app.get('/api/provider/documents', async (c) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const decoded = await verifyJWT(token, JWT_SECRET);
+    const decoded = await verifyJWT(token);
     
     if (!decoded || decoded.user_type !== 'provider') {
       return c.json({ 
@@ -889,6 +974,7 @@ app.get('/api/provider/documents', async (c) => {
         pd.id,
         pd.document_type,
         pd.document_name,
+        pd.document_url,
         pd.file_size,
         pd.verification_status,
         pd.verification_notes,
@@ -915,20 +1001,11 @@ app.get('/api/provider/documents', async (c) => {
 });
 
 // Admin: Get Pending Providers for Review
-app.get('/api/admin/pending-providers', async (c) => {
+app.get('/api/admin/pending-providers', authMiddleware, async (c) => {
   try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return c.json({ 
-        success: false, 
-        error: 'يجب تسجيل الدخول أولاً' 
-      }, 401);
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const decoded = await verifyJWT(token, JWT_SECRET);
+    const user = c.get('user');
     
-    if (!decoded || decoded.user_type !== 'admin') {
+    if (user.user_type !== 'admin') {
       return c.json({ 
         success: false, 
         error: 'غير مصرح بالوصول - إدارة فقط' 
@@ -986,7 +1063,7 @@ app.get('/api/admin/provider/:providerId/documents', async (c) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const decoded = await verifyJWT(token, JWT_SECRET);
+    const decoded = await verifyJWT(token);
     
     if (!decoded || decoded.user_type !== 'admin') {
       return c.json({ 
@@ -1003,6 +1080,7 @@ app.get('/api/admin/provider/:providerId/documents', async (c) => {
         pd.id,
         pd.document_type,
         pd.document_name,
+        pd.document_url,
         pd.file_size,
         pd.verification_status,
         pd.verification_notes,
@@ -1027,20 +1105,11 @@ app.get('/api/admin/provider/:providerId/documents', async (c) => {
 });
 
 // Admin: Approve/Reject Provider
-app.post('/api/admin/verify-provider', async (c) => {
+app.post('/api/admin/verify-provider', authMiddleware, async (c) => {
   try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return c.json({ 
-        success: false, 
-        error: 'يجب تسجيل الدخول أولاً' 
-      }, 401);
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const decoded = await verifyJWT(token, JWT_SECRET);
+    const user = c.get('user');
     
-    if (!decoded || decoded.user_type !== 'admin') {
+    if (user.user_type !== 'admin') {
       return c.json({ 
         success: false, 
         error: 'غير مصرح بالوصول - إدارة فقط' 
@@ -1068,6 +1137,22 @@ app.post('/api/admin/verify-provider', async (c) => {
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).bind(action, notes || null, provider_id).run();
+
+    // CRITICAL: Also update users.verified field
+    // Get provider user_id first
+    const providerInfo = await env.DB.prepare(`
+      SELECT user_id FROM provider_profiles WHERE id = ?
+    `).bind(provider_id).first() as any;
+    
+    if (providerInfo) {
+      // Update users table verified status
+      const isVerified = action === 'approved' ? 1 : 0;
+      await env.DB.prepare(`
+        UPDATE users 
+        SET verified = ?, updated_at = CURRENT_TIMESTAMP 
+        WHERE id = ?
+      `).bind(isVerified, providerInfo.user_id).run();
+    }
 
     // Get provider info for notification
     const provider = await env.DB.prepare(`
@@ -1123,7 +1208,7 @@ app.post('/api/admin/verify-document', async (c) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const decoded = await verifyJWT(token, JWT_SECRET);
+    const decoded = await verifyJWT(token);
     
     if (!decoded || decoded.user_type !== 'admin') {
       return c.json({ 
@@ -2669,7 +2754,7 @@ app.get('/admin', (c) => {
 
         <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
         <script src="/static/auth-utils.js"></script>
-        <script src="/static/admin.js"></script>
+        <script src="/static/admin_full.js"></script>
     </body>
     </html>
   `)
@@ -3224,6 +3309,563 @@ app.get('/', (c) => {
         <script src="/static/auth-utils.js"></script>
         <script src="/static/app.js"></script>\n    </body>\n    </html>\n  `)
 })
+
+// Admin: Get User Details (Comprehensive)
+app.get('/api/admin/users/:userId/details', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const userId = c.req.param('userId');
+
+    // Get basic user information
+    const userInfo = await env.DB.prepare(`
+      SELECT 
+        u.id,
+        u.email,
+        u.name,
+        u.phone,
+        u.user_type,
+        u.verified,
+        u.active,
+        u.city,
+        u.address,
+        u.created_at,
+        u.updated_at
+      FROM users u
+      WHERE u.id = ?
+    `).bind(userId).first() as any;
+
+    if (!userInfo) {
+      return c.json({ 
+        success: false, 
+        error: 'المستخدم غير موجود' 
+      }, 404);
+    }
+
+    let detailedInfo = {
+      user: userInfo,
+      provider_profile: null,
+      categories: [],
+      requests: [],
+      statistics: {}
+    };
+
+    // If user is a provider, get additional provider information
+    if (userInfo.user_type === 'provider') {
+      // Get provider profile
+      const providerProfile = await env.DB.prepare(`
+        SELECT 
+          pp.*,
+          pd.id as document_count
+        FROM provider_profiles pp
+        LEFT JOIN provider_documents pd ON pp.id = pd.provider_id
+        WHERE pp.user_id = ?
+        GROUP BY pp.id
+      `).bind(userId).first() as any;
+
+      if (providerProfile) {
+        detailedInfo.provider_profile = providerProfile;
+
+        // Get provider categories/skills
+        const categories = await env.DB.prepare(`
+          SELECT 
+            pc.experience_level,
+            pc.price_per_hour,
+            c.name_ar as category_name,
+            c.icon
+          FROM provider_categories pc
+          JOIN categories c ON pc.category_id = c.id
+          WHERE pc.provider_id = ?
+        `).bind(providerProfile.id).all() as any;
+
+        detailedInfo.categories = categories.results || [];
+
+        // Get provider statistics
+        const stats = await env.DB.prepare(`
+          SELECT 
+            COUNT(CASE WHEN sr.status = 'completed' THEN 1 END) as completed_jobs,
+            COUNT(CASE WHEN sr.status = 'in_progress' THEN 1 END) as active_jobs,
+            COUNT(CASE WHEN sr.status = 'pending' THEN 1 END) as pending_jobs,
+            AVG(CASE WHEN sr.customer_rating IS NOT NULL THEN sr.customer_rating END) as avg_rating,
+            COUNT(CASE WHEN sr.customer_rating IS NOT NULL THEN 1 END) as total_reviews
+          FROM service_requests sr
+          WHERE sr.assigned_provider_id = ?
+        `).bind(providerProfile.id).first() as any;
+
+        detailedInfo.statistics = stats || {};
+
+        // Get recent requests (last 10)
+        const recentRequests = await env.DB.prepare(`
+          SELECT 
+            sr.id,
+            sr.title,
+            sr.status,
+            sr.created_at,
+            sr.accepted_price,
+            sr.customer_rating,
+            u.name as customer_name
+          FROM service_requests sr
+          JOIN users u ON sr.customer_id = u.id
+          WHERE sr.assigned_provider_id = ?
+          ORDER BY sr.created_at DESC
+          LIMIT 10
+        `).bind(providerProfile.id).all() as any;
+
+        detailedInfo.requests = recentRequests.results || [];
+      }
+    }
+
+    // If user is a customer, get customer-specific information
+    if (userInfo.user_type === 'customer') {
+      // Get customer requests
+      const customerRequests = await env.DB.prepare(`
+        SELECT 
+          sr.id,
+          sr.title,
+          sr.description,
+          sr.status,
+          sr.created_at,
+          sr.budget_min,
+          sr.budget_max,
+          sr.accepted_price,
+          sr.customer_rating,
+          c.name_ar as category_name,
+          pp.business_name as provider_name
+        FROM service_requests sr
+        LEFT JOIN categories c ON sr.category_id = c.id
+        LEFT JOIN provider_profiles pp ON sr.assigned_provider_id = pp.id
+        WHERE sr.customer_id = ?
+        ORDER BY sr.created_at DESC
+        LIMIT 20
+      `).bind(userId).all() as any;
+
+      detailedInfo.requests = customerRequests.results || [];
+
+      // Get customer statistics
+      const customerStats = await env.DB.prepare(`
+        SELECT 
+          COUNT(*) as total_requests,
+          COUNT(CASE WHEN sr.status = 'completed' THEN 1 END) as completed_requests,
+          COUNT(CASE WHEN sr.status = 'pending' THEN 1 END) as pending_requests,
+          AVG(CASE WHEN sr.accepted_price IS NOT NULL THEN sr.accepted_price END) as avg_spent
+        FROM service_requests sr
+        WHERE sr.customer_id = ?
+      `).bind(userId).first() as any;
+
+      detailedInfo.statistics = customerStats || {};
+    }
+
+    return c.json({ 
+      success: true, 
+      data: detailedInfo
+    });
+
+  } catch (error) {
+    console.error('Error fetching user details:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في جلب تفاصيل المستخدم' 
+    }, 500);
+  }
+});
+
+// Admin: Get Provider Documents
+app.get('/api/admin/users/:userId/documents', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const userId = c.req.param('userId');
+
+    // Get provider profile ID first
+    const providerProfile = await env.DB.prepare(`
+      SELECT id FROM provider_profiles WHERE user_id = ?
+    `).bind(userId).first() as any;
+
+    if (!providerProfile) {
+      return c.json({ 
+        success: false, 
+        error: 'المستخدم ليس مقدم خدمة أو لا يوجد ملف شخصي' 
+      }, 404);
+    }
+
+    // Get all documents for this provider
+    const documents = await env.DB.prepare(`
+      SELECT 
+        pd.id,
+        pd.document_type,
+        pd.document_name,
+        pd.document_url,
+        pd.file_size,
+        pd.mime_type,
+        pd.verification_status,
+        pd.verification_notes,
+        pd.uploaded_at,
+        pd.verified_at
+      FROM provider_documents pd
+      WHERE pd.provider_id = ?
+      ORDER BY pd.uploaded_at DESC
+    `).bind(providerProfile.id).all() as any;
+
+    return c.json({ 
+      success: true, 
+      data: documents.results || []
+    });
+
+  } catch (error) {
+    console.error('Error fetching provider documents:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في جلب وثائق المزود' 
+    }, 500);
+  }
+});
+
+// Admin: View Document/File
+app.get('/api/admin/documents/:documentId/view', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const documentId = c.req.param('documentId');
+
+    // Get document information
+    const document = await env.DB.prepare(`
+      SELECT 
+        pd.id,
+        pd.document_name,
+        pd.document_url,
+        pd.mime_type,
+        pd.file_size,
+        pp.business_name,
+        u.name as provider_name
+      FROM provider_documents pd
+      JOIN provider_profiles pp ON pd.provider_id = pp.id
+      JOIN users u ON pp.user_id = u.id
+      WHERE pd.id = ?
+    `).bind(documentId).first() as any;
+
+    if (!document) {
+      return c.json({ 
+        success: false, 
+        error: 'المستند غير موجود' 
+      }, 404);
+    }
+
+    // For now, return document info (in real implementation, would serve the actual file)
+    // This is a placeholder - in production you'd serve from file storage
+    return c.json({ 
+      success: true, 
+      data: {
+        document_info: document,
+        view_url: document.document_url, // Direct URL to document
+        download_url: `/api/admin/documents/${documentId}/download`
+      }
+    });
+
+  } catch (error) {
+    console.error('Error viewing document:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في عرض المستند' 
+    }, 500);
+  }
+});
+
+// Admin: Update Document Status (Approve/Reject)
+app.put('/api/admin/documents/:documentId/approve', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const documentId = c.req.param('documentId');
+    const { verification_status, verification_notes } = await c.req.json();
+
+    // Validate input
+    if (!verification_status || !['approved', 'rejected'].includes(verification_status)) {
+      return c.json({ 
+        success: false, 
+        error: 'حالة التحقق غير صحيحة' 
+      }, 400);
+    }
+
+    // Update document status
+    const result = await env.DB.prepare(`
+      UPDATE provider_documents 
+      SET verification_status = ?, 
+          verification_notes = ?, 
+          verified_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(verification_status, verification_notes || '', parseInt(documentId)).run();
+
+    if (result.success && result.changes > 0) {
+      // If all documents for this provider are approved, update provider status
+      if (verification_status === 'approved') {
+        // Check if all documents for this provider are now approved
+        const providerCheck = await env.DB.prepare(`
+          SELECT 
+            pp.id as provider_id,
+            COUNT(pd.id) as total_docs,
+            SUM(CASE WHEN pd.verification_status = 'approved' THEN 1 ELSE 0 END) as approved_docs
+          FROM provider_documents pd
+          JOIN provider_profiles pp ON pd.provider_id = pp.id
+          WHERE pd.id = ?
+          GROUP BY pp.id
+        `).bind(documentId).first() as any;
+
+        if (providerCheck && providerCheck.total_docs === providerCheck.approved_docs) {
+          // All documents are approved, update provider status
+          await env.DB.prepare(`
+            UPDATE provider_profiles 
+            SET verification_status = 'approved'
+            WHERE id = ?
+          `).bind(providerCheck.provider_id).run();
+        }
+      }
+
+      return c.json({ 
+        success: true, 
+        message: verification_status === 'approved' ? 'تمت الموافقة على الوثيقة بنجاح' : 'تم رفض الوثيقة'
+      });
+    } else {
+      return c.json({ 
+        success: false, 
+        error: 'المستند غير موجود' 
+      }, 404);
+    }
+
+  } catch (error) {
+    console.error('Error updating document status:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في تحديث حالة المستند' 
+    }, 500);
+  }
+});
+
+// Admin: Reject Document (dedicated endpoint for rejection)
+app.put('/api/admin/documents/:documentId/reject', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const documentId = c.req.param('documentId');
+    const { verification_notes } = await c.req.json();
+
+    // Update document status to rejected
+    const result = await env.DB.prepare(`
+      UPDATE provider_documents 
+      SET verification_status = 'rejected', 
+          verification_notes = ?, 
+          verified_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(verification_notes || 'تم رفض الوثيقة', parseInt(documentId)).run();
+
+    if (result.success && result.changes > 0) {
+      return c.json({ 
+        success: true, 
+        message: 'تم رفض الوثيقة بنجاح'
+      });
+    } else {
+      return c.json({ 
+        success: false, 
+        error: 'المستند غير موجود' 
+      }, 404);
+    }
+
+  } catch (error) {
+    console.error('Error rejecting document:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في رفض المستند' 
+    }, 500);
+  }
+});
+
+// Admin: Get Pending Documents Count
+app.get('/api/admin/documents/pending-count', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const { env } = c;
+
+    const pendingCount = await env.DB.prepare(`
+      SELECT COUNT(*) as count 
+      FROM provider_documents 
+      WHERE verification_status = 'pending'
+    `).first() as any;
+
+    return c.json({ 
+      success: true, 
+      data: {
+        pending_documents: pendingCount?.count || 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting pending documents count:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في جلب عدد المستندات المعلقة' 
+    }, 500);
+  }
+});
+
+// Admin: Get Pending Documents List with Provider Details
+app.get('/api/admin/documents/pending-list', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const { env } = c;
+
+    const pendingDocuments = await env.DB.prepare(`
+      SELECT 
+        pd.id,
+        pd.document_name,
+        pd.document_type,
+        pd.file_size,
+        pd.mime_type,
+        pd.uploaded_at,
+        pd.verification_status,
+        pd.verification_notes,
+        u.id as user_id,
+        u.name as provider_name,
+        u.email as provider_email,
+        u.phone as provider_phone,
+        pp.business_name
+      FROM provider_documents pd
+      JOIN provider_profiles pp ON pd.provider_id = pp.id
+      JOIN users u ON pp.user_id = u.id
+      WHERE pd.verification_status = 'pending'
+      ORDER BY pd.uploaded_at DESC
+    `).all() as any;
+
+    const documentsList = pendingDocuments.results || [];
+
+    return c.json({ 
+      success: true, 
+      data: {
+        pending_documents: documentsList,
+        count: documentsList.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting pending documents list:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في جلب قائمة المستندات المعلقة' 
+    }, 500);
+  }
+});
+
+// Admin: Download Document
+app.get('/api/admin/documents/:documentId/download', authMiddleware, async (c) => {
+  try {
+    const user = c.get('user');
+    const { env } = c;
+    
+    if (user.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const documentId = c.req.param('documentId');
+    
+    // Get document information from database
+    const document = await env.DB.prepare(`
+      SELECT 
+        pd.id,
+        pd.document_name,
+        pd.document_url,
+        pd.mime_type,
+        pp.business_name,
+        u.name as provider_name
+      FROM provider_documents pd
+      JOIN provider_profiles pp ON pd.provider_id = pp.id
+      JOIN users u ON pp.user_id = u.id
+      WHERE pd.id = ?
+    `).bind(documentId).first() as any;
+
+    if (!document) {
+      return c.json({ 
+        success: false, 
+        error: 'المستند غير موجود' 
+      }, 404);
+    }
+
+    // If document URL is available and not pending_upload, redirect to it
+    if (document.document_url && !document.document_url.includes('pending_upload')) {
+      // For external URLs, redirect to them for download
+      return c.redirect(document.document_url);
+    } else {
+      // Document not uploaded yet
+      return c.json({ 
+        success: false, 
+        error: 'الوثيقة لم يتم رفعها بعد - لا يمكن التحميل' 
+      }, 400);
+    }
+
+  } catch (error) {
+    console.error('Error downloading document:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في تحميل المستند' 
+    }, 500);
+  }
+});
 
 // Favicon route to prevent 500 errors
 app.get('/favicon.ico', (c) => {

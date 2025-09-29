@@ -10,28 +10,37 @@ configureAxiosAuth();
 let currentUser = null;
 let pendingProviders = [];
 let selectedProvider = null;
+let pendingDocuments = 0;
+let allUsers = { users: [], pagination: { page: 1, total: 0, pages: 0 } };
+let adminStats = {};
+let allRequests = [];
+let allCategories = [];
+let currentView = 'dashboard';
 
 // Initialize the admin panel
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, initializing admin panel...');
     initializeAdmin();
 });
 
 async function initializeAdmin() {
     try {
+        console.log('Starting admin initialization...');
+        
         // Check authentication status
         await checkAuthStatus();
+        console.log('Auth check complete. User:', currentUser);
         
         if (!currentUser) {
-            // Redirect to main page if not logged in
-            showMessage('يرجى تسجيل الدخول أولاً', 'warning');
-            setTimeout(() => {
-                window.location.href = '/';
-            }, 2000);
+            // Show admin login form instead of redirecting
+            console.log('No user found, showing login form...');
+            showAdminLogin();
             return;
         }
         
         if (currentUser.user_type !== 'admin') {
             // Redirect if not admin
+            console.log('User is not admin, redirecting...');
             showMessage('هذه الصفحة متاحة للإدارة فقط', 'error');
             setTimeout(() => {
                 window.location.href = '/dashboard';
@@ -39,10 +48,12 @@ async function initializeAdmin() {
             return;
         }
         
+        console.log('User is admin, updating UI...');
         // Update UI based on user
         updateAdminUI();
         
         // Load admin dashboard
+        console.log('Loading admin dashboard...');
         await loadAdminDashboard();
         
         console.log('Admin panel initialized successfully');
@@ -55,10 +66,13 @@ async function initializeAdmin() {
 // Check if user is logged in
 async function checkAuthStatus() {
     try {
+        console.log('Checking authentication status...');
         currentUser = await checkAuthenticationStatus();
+        console.log('Authentication result:', currentUser);
     } catch (error) {
-        console.log('Auth check error:', error);
+        console.error('Auth check error:', error);
         currentUser = null;
+        throw error; // Re-throw to handle in parent
     }
 }
 
@@ -110,40 +124,85 @@ function updateDashboardLinksAdmin() {
     }
 }
 
-// Global admin data
-let adminStats = {};
-let allUsers = [];
-let allRequests = [];
-let allCategories = [];
-let currentView = 'dashboard';
+// Additional global variables (adminStats already declared above)
+// Removed duplicate declarations
 
 // Load complete admin dashboard
 async function loadAdminDashboard() {
     try {
+        console.log('Loading admin dashboard data...');
         showMessage('جاري تحميل لوحة الإدارة...', 'info');
         
-        // Load all data in parallel
-        const [statsResponse, pendingResponse] = await Promise.all([
-            axios.get('/api/admin/statistics'),
-            axios.get('/api/admin/pending-providers')
-        ]);
+        // Initialize with default values
+        adminStats = { users: {}, providers: {}, requests: {} };
+        pendingProviders = [];
+        pendingDocuments = 0;
         
-        if (statsResponse.data.success) {
-            adminStats = statsResponse.data.data;
+        // Load data sequentially with better error handling
+        console.log('Loading statistics...');
+        try {
+            const statsResponse = await axios.get('/api/admin/statistics');
+            if (statsResponse.data && statsResponse.data.success) {
+                adminStats = statsResponse.data.data || { users: {}, providers: {}, requests: {} };
+                console.log('Statistics loaded:', adminStats);
+            }
+        } catch (error) {
+            console.error('Error loading stats:', error);
+            adminStats = { users: {}, providers: {}, requests: {} };
         }
         
-        if (pendingResponse.data.success) {
-            pendingProviders = pendingResponse.data.data;
+        console.log('Loading pending providers...');
+        try {
+            const pendingResponse = await axios.get('/api/admin/pending-providers');
+            if (pendingResponse.data && pendingResponse.data.success) {
+                pendingProviders = pendingResponse.data.data || [];
+                console.log('Pending providers loaded:', pendingProviders.length);
+            }
+        } catch (error) {
+            console.error('Error loading pending providers:', error);
+            pendingProviders = [];
         }
         
+        console.log('Loading pending documents count...');
+        try {
+            const documentsResponse = await axios.get('/api/admin/documents/pending-count');
+            if (documentsResponse.data && documentsResponse.data.success) {
+                pendingDocuments = documentsResponse.data.data.pending_documents || 0;
+                console.log('Pending documents count:', pendingDocuments);
+            }
+        } catch (error) {
+            console.error('Error loading documents count:', error);
+            pendingDocuments = 0;
+        }
+        
+        console.log('Rendering admin panel...');
         renderAdminPanel();
         showMessage('تم تحميل لوحة الإدارة بنجاح', 'success');
+        
+        // Start auto-refresh after successful loading
+        console.log('Starting auto-refresh...');
+        startAutoRefresh();
         
     } catch (error) {
         console.error('Error loading admin dashboard:', error);
         showMessage('حدث خطأ في تحميل لوحة الإدارة: ' + (error.response?.data?.error || error.message), 'error');
-        renderAdminPanel(); // Still render the page even if loading fails
+        // Still render the page even if loading fails
+        renderAdminPanel();
     }
+}
+
+// Start auto-refresh functionality
+function startAutoRefresh() {
+    // Auto-refresh every 30 seconds to check for new documents
+    setTimeout(() => {
+        setInterval(async () => {
+            try {
+                await checkForNewDocuments();
+            } catch (error) {
+                console.log('Auto-refresh error (silent):', error);
+            }
+        }, 30000); // 30 seconds
+    }, 10000); // Start after 10 seconds
 }
 
 // Load users data
@@ -236,7 +295,9 @@ function renderAdminPanel() {
                     </button>
                     <button onclick="switchView('providers')" class="nav-tab ${currentView === 'providers' ? 'active' : ''} px-6 py-3 font-medium text-sm border-b-2 transition-colors">
                         <i class="fas fa-user-check ml-2"></i>
-                        مراجعة المزودين (${pendingProviders.length})
+                        مراجعة المزودين 
+                        ${pendingProviders.length > 0 ? `<span class="bg-red-500 text-white text-xs px-2 py-1 rounded-full mr-1">${pendingProviders.length}</span>` : ''}
+                        ${pendingDocuments && pendingDocuments > 0 ? `<span class="bg-orange-500 text-white text-xs px-2 py-1 rounded-full mr-1">${pendingDocuments} وثيقة</span>` : ''}
                     </button>
                     <button onclick="switchView('users')" class="nav-tab ${currentView === 'users' ? 'active' : ''} px-6 py-3 font-medium text-sm border-b-2 transition-colors">
                         <i class="fas fa-users ml-2"></i>
@@ -512,6 +573,14 @@ function renderProvidersView() {
                     مراجعة طلبات مقدمي الخدمات
                 </h2>
                 <p class="text-gray-600 text-sm mt-1">طلبات التحقق الجديدة التي تحتاج لمراجعة (${pendingProviders.length})</p>
+                ${pendingDocuments > 0 ? `
+                    <div class="mt-2 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                        <div class="flex items-center">
+                            <i class="fas fa-exclamation-triangle text-orange-600 mr-2"></i>
+                            <span class="text-orange-800 font-medium">يوجد ${pendingDocuments} وثيقة جديدة تحتاج لمراجعة</span>
+                        </div>
+                    </div>
+                ` : ''}
             </div>
             <div class="p-6">
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -601,29 +670,81 @@ function showReviewModal(documents) {
     
     const documentsHtml = documents.length > 0 ? 
         documents.map(doc => {
-            const statusClass = `document-status status-${doc.verification_status}`;
-            const statusText = getDocumentStatusText(doc.verification_status);
-            const documentTypeText = getDocumentTypeText(doc.document_type);
+            const statusClass = `px-2 py-1 rounded text-xs font-medium ${
+                doc.verification_status === 'approved' ? 'bg-green-100 text-green-800' :
+                doc.verification_status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                'bg-red-100 text-red-800'
+            }`;
+            const statusText = doc.verification_status === 'approved' ? 'موافق عليه' :
+                             doc.verification_status === 'pending' ? 'قيد المراجعة' : 'مرفوض';
+            const documentTypeText = doc.document_type === 'national_id' ? 'البطاقة الشخصية' :
+                                   doc.document_type === 'license' ? 'رخصة العمل' :
+                                   doc.document_type === 'certificate' ? 'شهادة' :
+                                   doc.document_type === 'portfolio' ? 'معرض الأعمال' :
+                                   'مستند آخر';
+            
+            const fileSizeKB = doc.file_size ? Math.round(doc.file_size / 1024) : 0;
+            const isPendingUpload = doc.document_url === 'pending_upload';
             
             return `
-                <div class="border rounded-lg p-4 mb-4">
-                    <div class="flex items-center justify-between mb-2">
-                        <h4 class="font-semibold text-gray-800">${documentTypeText}</h4>
+                <div class="border rounded-lg p-4 mb-4 ${isPendingUpload ? 'border-orange-300 bg-orange-50' : 'border-gray-200'}">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="flex-1">
+                            <h4 class="font-semibold text-gray-800 mb-1">${documentTypeText}</h4>
+                            <p class="text-sm text-gray-600 mb-1">${doc.document_name}</p>
+                            <div class="flex items-center space-x-4 space-x-reverse text-xs text-gray-500">
+                                <span><i class="fas fa-calendar ml-1"></i>${new Date(doc.uploaded_at).toLocaleDateString('ar-JO')}</span>
+                                <span><i class="fas fa-weight ml-1"></i>${fileSizeKB} KB</span>
+                                ${doc.mime_type ? `<span><i class="fas fa-file ml-1"></i>${doc.mime_type}</span>` : ''}
+                            </div>
+                        </div>
                         <span class="${statusClass}">${statusText}</span>
                     </div>
-                    <p class="text-sm text-gray-600 mb-2">${doc.document_name}</p>
-                    <p class="text-xs text-gray-500">تاريخ الرفع: ${new Date(doc.uploaded_at).toLocaleDateString('ar-JO')}</p>
-                    ${doc.verification_notes ? `<p class="text-xs text-gray-600 mt-2 p-2 bg-gray-50 rounded">${doc.verification_notes}</p>` : ''}
                     
-                    <div class="mt-3 flex space-x-2 space-x-reverse">
-                        <button onclick="verifyDocument(${doc.id}, 'approved')" class="text-sm bg-green-100 text-green-800 px-3 py-1 rounded">
-                            <i class="fas fa-check ml-1"></i>
-                            قبول
-                        </button>
-                        <button onclick="verifyDocument(${doc.id}, 'rejected')" class="text-sm bg-red-100 text-red-800 px-3 py-1 rounded">
-                            <i class="fas fa-times ml-1"></i>
-                            رفض
-                        </button>
+                    ${isPendingUpload ? `
+                        <div class="bg-orange-100 border border-orange-200 p-3 rounded-lg mb-3">
+                            <div class="flex items-center text-orange-800">
+                                <i class="fas fa-clock mr-2"></i>
+                                <span class="font-medium">الوثيقة قيد المعالجة</span>
+                            </div>
+                            <p class="text-sm text-orange-700 mt-1">لم يتم رفع الملف بعد أو قيد المراجعة</p>
+                        </div>
+                    ` : `
+                        <div class="mb-3">
+                            <button onclick="viewDocument(${doc.id})" class="text-sm bg-blue-100 text-blue-800 hover:bg-blue-200 px-3 py-1 rounded transition-colors">
+                                <i class="fas fa-eye ml-1"></i>
+                                معاينة الوثيقة
+                            </button>
+                        </div>
+                    `}
+                    
+                    ${doc.verification_notes ? `
+                        <div class="bg-gray-50 border rounded p-2 mb-3">
+                            <p class="text-xs font-medium text-gray-700">ملاحظات المراجع:</p>
+                            <p class="text-sm text-gray-600">${doc.verification_notes}</p>
+                        </div>
+                    ` : ''}
+                    
+                    <div class="flex space-x-2 space-x-reverse">
+                        ${!isPendingUpload && doc.verification_status === 'pending' ? `
+                            <button onclick="approveDocument(${doc.id})" class="text-sm bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded transition-colors">
+                                <i class="fas fa-check ml-1"></i>
+                                موافقة
+                            </button>
+                            <button onclick="rejectDocument(${doc.id})" class="text-sm bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded transition-colors">
+                                <i class="fas fa-times ml-1"></i>
+                                رفض
+                            </button>
+                        ` : isPendingUpload ? `
+                            <button disabled class="text-sm bg-gray-400 text-white px-3 py-1 rounded cursor-not-allowed">
+                                <i class="fas fa-clock ml-1"></i>
+                                في انتظار الرفع
+                            </button>
+                            <button onclick="verifyDocument(${doc.id}, 'rejected')" class="text-sm bg-red-100 text-red-800 px-3 py-1 rounded">
+                                <i class="fas fa-times ml-1"></i>
+                                رفض
+                            </button>
+                        ` : ''}
                     </div>
                 </div>
             `;
@@ -728,13 +849,92 @@ async function performProviderVerification(providerId, action, notes = '') {
         if (response.data.success) {
             showMessage(response.data.message, 'success');
             closeReviewModal();
-            await loadPendingProviders(); // Reload the list
+            // Reload the pending providers list
+            await reloadPendingProviders();
         } else {
             showMessage(response.data.error || 'حدث خطأ في العملية', 'error');
         }
     } catch (error) {
         console.error('Error verifying provider:', error);
         showMessage('حدث خطأ في العملية', 'error');
+    }
+}
+
+// Show admin login form
+function showAdminLogin() {
+    const container = document.getElementById('admin-container');
+    container.innerHTML = `
+        <div class="min-h-screen bg-gray-100 flex items-center justify-center">
+            <div class="max-w-md w-full bg-white rounded-lg shadow-lg p-8">
+                <div class="text-center mb-8">
+                    <i class="fas fa-shield-alt text-4xl text-blue-600 mb-4"></i>
+                    <h2 class="text-2xl font-bold text-gray-800">تسجيل دخول الإدارة</h2>
+                    <p class="text-gray-600">يرجى إدخال بيانات المدير للوصول إلى لوحة التحكم</p>
+                </div>
+                
+                <form id="admin-login-form" class="space-y-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">البريد الإلكتروني</label>
+                        <input type="email" id="admin_email" value="admin@example.com" 
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+                               placeholder="admin@example.com" required>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">كلمة المرور</label>
+                        <input type="password" id="admin_password" value="admin123"
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+                               placeholder="كلمة المرور" required>
+                    </div>
+                    
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors">
+                        <i class="fas fa-sign-in-alt ml-2"></i>
+                        تسجيل الدخول
+                    </button>
+                </form>
+                
+                <div class="mt-6 text-center">
+                    <p class="text-sm text-gray-500">للاختبار: admin@example.com / admin123</p>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Handle admin login form
+    document.getElementById('admin-login-form').addEventListener('submit', handleAdminLogin);
+}
+
+// Handle admin login
+async function handleAdminLogin(event) {
+    event.preventDefault();
+    
+    const email = document.getElementById('admin_email').value;
+    const password = document.getElementById('admin_password').value;
+    
+    try {
+        showMessage('جاري تسجيل الدخول...', 'info');
+        
+        const response = await axios.post('/api/login', {
+            email: email,
+            password: password
+        });
+        
+        if (response.data.success) {
+            // Save token
+            saveAuthToken(response.data.token);
+            
+            showMessage('تم تسجيل الدخول بنجاح', 'success');
+            
+            // Reload admin panel
+            setTimeout(() => {
+                initializeAdmin();
+            }, 1000);
+        } else {
+            showMessage(response.data.error || 'فشل في تسجيل الدخول', 'error');
+        }
+    } catch (error) {
+        console.error('Login error:', error);
+        showMessage('حدث خطأ في تسجيل الدخول: ' + (error.response?.data?.error || error.message), 'error');
     }
 }
 
@@ -927,6 +1127,11 @@ function renderUsersView() {
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div class="flex items-center space-x-2 space-x-reverse">
+                            <button onclick="viewUserDetails(${user.id})" 
+                                    class="text-indigo-600 hover:text-indigo-900 transition-colors">
+                                <i class="fas fa-eye mr-1"></i>
+                                التفاصيل
+                            </button>
                             <button onclick="toggleUserStatus(${user.id}, ${!user.active}, '${user.name}')" 
                                     class="${user.active ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}">
                                 <i class="${user.active ? 'fas fa-user-slash' : 'fas fa-user-check'} mr-1"></i>
@@ -1240,9 +1445,33 @@ function debounceSearchUsers(searchTerm) {
     }, 500);
 }
 
+// Reload pending providers after verification
+async function reloadPendingProviders() {
+    try {
+        const response = await axios.get('/api/admin/pending-providers');
+        if (response.data.success) {
+            pendingProviders = response.data.data;
+            // If we're currently viewing the providers page, re-render it
+            if (currentView === 'providers') {
+                renderProvidersView();
+            }
+        }
+    } catch (error) {
+        console.error('Error reloading pending providers:', error);
+        // Don't show error message here as the main operation succeeded
+    }
+}
+
 // Toggle user status
 async function toggleUserStatus(userId, newStatus, userName) {
-    if (confirm(`هل أنت متأكد من ${newStatus ? 'تفعيل' : 'تعطيل'} المستخدم ${userName}؟`)) {
+    let confirmMessage;
+    if (newStatus) {
+        confirmMessage = `هل أنت متأكد من تفعيل المستخدم ${userName}؟\n\nسيتمكن من:\n• تسجيل الدخول للنظام\n• استخدام جميع المميزات\n• ظهور في نتائج البحث (للمقدمين)`;
+    } else {
+        confirmMessage = `هل أنت متأكد من تعطيل المستخدم ${userName}؟\n\n⚠️ تحذير: سيؤدي هذا إلى:\n• منعه من تسجيل الدخول\n• إنهاء جلسته الحالية\n• إلغاء طلباته المعلقة (للمقدمين)\n• إشعار العملاء المتأثرين\n• إخفاؤه من نتائج البحث`;
+    }
+    
+    if (confirm(confirmMessage)) {
         try {
             const response = await axios.post(`/api/admin/users/${userId}/status`, {
                 active: newStatus
@@ -1289,3 +1518,531 @@ function viewRequestDetails(requestId) {
     // This can be expanded to show a detailed modal
     showMessage(`عرض تفاصيل الطلب رقم ${requestId} - ميزة قيد التطوير`, 'info');
 }
+
+// ===== USER DETAILS MODAL FUNCTIONS =====
+
+let currentUserDetails = null;
+let currentUserDocuments = [];
+
+// View user details (main function)
+async function viewUserDetails(userId) {
+    try {
+        showMessage('جاري تحميل تفاصيل المستخدم...', 'info');
+        
+        // Fetch user details
+        const response = await axios.get(`/api/admin/users/${userId}/details`);
+        
+        if (response.data.success) {
+            currentUserDetails = response.data.data;
+            
+            // If user is a provider, also fetch documents
+            if (currentUserDetails.user.user_type === 'provider') {
+                await loadUserDocuments(userId);
+            }
+            
+            showUserDetailsModal();
+        } else {
+            showMessage(response.data.error || 'حدث خطأ في تحميل التفاصيل', 'error');
+        }
+    } catch (error) {
+        console.error('Error loading user details:', error);
+        showMessage('حدث خطأ في تحميل تفاصيل المستخدم', 'error');
+    }
+}
+
+// Load user documents (for providers)
+async function loadUserDocuments(userId) {
+    try {
+        const response = await axios.get(`/api/admin/users/${userId}/documents`);
+        
+        if (response.data.success) {
+            currentUserDocuments = response.data.data;
+        } else {
+            console.error('Failed to load documents:', response.data.error);
+            currentUserDocuments = [];
+        }
+    } catch (error) {
+        console.error('Error loading user documents:', error);
+        currentUserDocuments = [];
+    }
+}
+
+// Show user details modal
+function showUserDetailsModal() {
+    if (!currentUserDetails) return;
+    
+    const user = currentUserDetails.user;
+    const isProvider = user.user_type === 'provider';
+    const isCustomer = user.user_type === 'customer';
+    
+    // Create modal HTML
+    const modalHtml = `
+        <div id="user-details-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div class="bg-white rounded-lg max-w-4xl w-full max-h-screen overflow-y-auto">
+                <!-- Modal Header -->
+                <div class="flex justify-between items-center p-6 border-b">
+                    <h2 class="text-2xl font-bold text-gray-800">
+                        <i class="fas fa-user-circle ml-2"></i>
+                        تفاصيل ${user.name}
+                    </h2>
+                    <button onclick="closeUserDetailsModal()" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+                
+                <!-- Modal Content -->
+                <div class="p-6">
+                    <!-- Basic User Information -->
+                    <div class="bg-gray-50 rounded-lg p-4 mb-6">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                            <i class="fas fa-info-circle ml-2"></i>
+                            المعلومات الأساسية
+                        </h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <span class="text-sm text-gray-600">الاسم:</span>
+                                <p class="font-medium">${user.name}</p>
+                            </div>
+                            <div>
+                                <span class="text-sm text-gray-600">البريد الإلكتروني:</span>
+                                <p class="font-medium">${user.email}</p>
+                            </div>
+                            <div>
+                                <span class="text-sm text-gray-600">رقم الهاتف:</span>
+                                <p class="font-medium">${user.phone || 'غير محدد'}</p>
+                            </div>
+                            <div>
+                                <span class="text-sm text-gray-600">نوع الحساب:</span>
+                                <span class="px-2 py-1 rounded text-xs font-medium ${
+                                    user.user_type === 'provider' ? 'bg-blue-100 text-blue-800' :
+                                    user.user_type === 'customer' ? 'bg-green-100 text-green-800' :
+                                    'bg-red-100 text-red-800'
+                                }">
+                                    ${user.user_type === 'provider' ? 'مقدم خدمة' : 
+                                      user.user_type === 'customer' ? 'عميل' : 'إدارة'}
+                                </span>
+                            </div>
+                            <div>
+                                <span class="text-sm text-gray-600">حالة التحقق:</span>
+                                <span class="px-2 py-1 rounded text-xs font-medium ${
+                                    user.verified ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                }">
+                                    ${user.verified ? 'محقق' : 'غير محقق'}
+                                </span>
+                            </div>
+                            <div>
+                                <span class="text-sm text-gray-600">حالة الحساب:</span>
+                                <span class="px-2 py-1 rounded text-xs font-medium ${
+                                    user.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                }">
+                                    ${user.active ? 'نشط' : 'معطل'}
+                                </span>
+                            </div>
+                            <div>
+                                <span class="text-sm text-gray-600">المدينة:</span>
+                                <p class="font-medium">${user.city || 'غير محدد'}</p>
+                            </div>
+                            <div>
+                                <span class="text-sm text-gray-600">العنوان:</span>
+                                <p class="font-medium">${user.address || 'غير محدد'}</p>
+                            </div>
+                            <div>
+                                <span class="text-sm text-gray-600">تاريخ التسجيل:</span>
+                                <p class="font-medium">${new Date(user.created_at).toLocaleDateString('ar-EG')}</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    ${isProvider ? renderProviderDetails() : ''}
+                    ${isCustomer ? renderCustomerDetails() : ''}
+                    ${isProvider && currentUserDocuments.length > 0 ? renderProviderDocuments() : ''}
+                </div>
+                
+                <!-- Modal Footer -->
+                <div class="flex justify-end space-x-3 space-x-reverse p-6 border-t">
+                    <button onclick="closeUserDetailsModal()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors">
+                        إغلاق
+                    </button>
+                    <button onclick="editUser(${user.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors">
+                        <i class="fas fa-edit ml-2"></i>
+                        تعديل
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal if any
+    const existingModal = document.getElementById('user-details-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Add modal to page
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+}
+
+// Render provider-specific details
+function renderProviderDetails() {
+    if (!currentUserDetails.provider_profile) return '';
+    
+    const profile = currentUserDetails.provider_profile;
+    const categories = currentUserDetails.categories || [];
+    const stats = currentUserDetails.statistics || {};
+    
+    return `
+        <div class="bg-blue-50 rounded-lg p-4 mb-6">
+            <h3 class="text-lg font-semibold text-blue-800 mb-4">
+                <i class="fas fa-briefcase ml-2"></i>
+                معلومات مقدم الخدمة
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <span class="text-sm text-blue-600">اسم العمل:</span>
+                    <p class="font-medium">${profile.business_name || 'غير محدد'}</p>
+                </div>
+                <div>
+                    <span class="text-sm text-blue-600">سنوات الخبرة:</span>
+                    <p class="font-medium">${profile.experience_years || 0} سنة</p>
+                </div>
+                <div>
+                    <span class="text-sm text-blue-600">حالة التحقق:</span>
+                    <span class="px-2 py-1 rounded text-xs font-medium ${
+                        profile.verification_status === 'approved' ? 'bg-green-100 text-green-800' :
+                        profile.verification_status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-red-100 text-red-800'
+                    }">
+                        ${profile.verification_status === 'approved' ? 'موافق عليه' :
+                          profile.verification_status === 'pending' ? 'قيد المراجعة' : 'مرفوض'}
+                    </span>
+                </div>
+                <div>
+                    <span class="text-sm text-blue-600">متاح للعمل:</span>
+                    <span class="px-2 py-1 rounded text-xs font-medium ${
+                        profile.available ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                    }">
+                        ${profile.available ? 'متاح' : 'غير متاح'}
+                    </span>
+                </div>
+                <div>
+                    <span class="text-sm text-blue-600">الحد الأدنى للرسوم:</span>
+                    <p class="font-medium">${profile.minimum_charge || 0} دينار</p>
+                </div>
+                <div>
+                    <span class="text-sm text-blue-600">متوسط التقييم:</span>
+                    <p class="font-medium">
+                        ${profile.average_rating ? 
+                            `${profile.average_rating.toFixed(1)} ⭐ (${profile.total_reviews} تقييم)` : 
+                            'لا توجد تقييمات'
+                        }
+                    </p>
+                </div>
+            </div>
+            
+            ${profile.description ? `
+                <div class="mt-4">
+                    <span class="text-sm text-blue-600">الوصف:</span>
+                    <p class="font-medium bg-white p-3 rounded border">${profile.description}</p>
+                </div>
+            ` : ''}
+            
+            ${categories.length > 0 ? `
+                <div class="mt-4">
+                    <span class="text-sm text-blue-600">التخصصات:</span>
+                    <div class="flex flex-wrap gap-2 mt-2">
+                        ${categories.map(cat => `
+                            <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm">
+                                ${cat.icon} ${cat.category_name} - ${cat.experience_level}
+                            </span>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : ''}
+        </div>
+        
+        <!-- Provider Statistics -->
+        <div class="bg-green-50 rounded-lg p-4 mb-6">
+            <h3 class="text-lg font-semibold text-green-800 mb-4">
+                <i class="fas fa-chart-bar ml-2"></i>
+                الإحصائيات
+            </h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-green-600">${stats.completed_jobs || 0}</div>
+                    <div class="text-sm text-green-700">مهام مكتملة</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-blue-600">${stats.active_jobs || 0}</div>
+                    <div class="text-sm text-blue-700">مهام نشطة</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-orange-600">${stats.pending_jobs || 0}</div>
+                    <div class="text-sm text-orange-700">مهام معلقة</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-purple-600">
+                        ${stats.avg_rating ? stats.avg_rating.toFixed(1) : '0.0'}
+                    </div>
+                    <div class="text-sm text-purple-700">متوسط التقييم</div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Render customer-specific details
+function renderCustomerDetails() {
+    const stats = currentUserDetails.statistics || {};
+    
+    return `
+        <div class="bg-green-50 rounded-lg p-4 mb-6">
+            <h3 class="text-lg font-semibold text-green-800 mb-4">
+                <i class="fas fa-chart-bar ml-2"></i>
+                إحصائيات العميل
+            </h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-blue-600">${stats.total_requests || 0}</div>
+                    <div class="text-sm text-blue-700">إجمالي الطلبات</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-green-600">${stats.completed_requests || 0}</div>
+                    <div class="text-sm text-green-700">طلبات مكتملة</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-orange-600">${stats.pending_requests || 0}</div>
+                    <div class="text-sm text-orange-700">طلبات معلقة</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-purple-600">
+                        ${stats.avg_spent ? stats.avg_spent.toFixed(0) : '0'}
+                    </div>
+                    <div class="text-sm text-purple-700">متوسط الإنفاق (دينار)</div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Render provider documents
+function renderProviderDocuments() {
+    if (!currentUserDocuments || currentUserDocuments.length === 0) return '';
+    
+    return `
+        <div class="bg-yellow-50 rounded-lg p-4 mb-6">
+            <h3 class="text-lg font-semibold text-yellow-800 mb-4">
+                <i class="fas fa-file-alt ml-2"></i>
+                الوثائق المرفقة (${currentUserDocuments.length})
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                ${currentUserDocuments.map(doc => `
+                    <div class="bg-white border rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div class="flex items-start justify-between">
+                            <div class="flex-1">
+                                <h4 class="font-medium text-gray-800">${doc.document_name}</h4>
+                                <p class="text-sm text-gray-600 mt-1">
+                                    ${doc.document_type === 'national_id' ? 'البطاقة الشخصية' :
+                                      doc.document_type === 'license' ? 'رخصة العمل' :
+                                      doc.document_type === 'certificate' ? 'شهادة' :
+                                      doc.document_type === 'portfolio' ? 'معرض الأعمال' :
+                                      'مستند آخر'}
+                                </p>
+                                <div class="flex items-center mt-2">
+                                    <span class="px-2 py-1 rounded text-xs font-medium ${
+                                        doc.verification_status === 'approved' ? 'bg-green-100 text-green-800' :
+                                        doc.verification_status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                                        'bg-red-100 text-red-800'
+                                    }">
+                                        ${doc.verification_status === 'approved' ? 'موافق عليه' :
+                                          doc.verification_status === 'pending' ? 'قيد المراجعة' : 'مرفوض'}
+                                    </span>
+                                    <span class="text-xs text-gray-500 mr-2">
+                                        ${(doc.file_size / 1024).toFixed(0)} KB
+                                    </span>
+                                </div>
+                            </div>
+                            <button onclick="viewDocument(${doc.id})" class="bg-blue-500 hover:bg-blue-600 text-white text-sm px-3 py-1 rounded transition-colors">
+                                <i class="fas fa-eye"></i>
+                                عرض
+                            </button>
+                        </div>
+                        ${doc.verification_notes ? `
+                            <div class="mt-3 p-2 bg-gray-50 rounded text-sm">
+                                <strong>ملاحظات:</strong> ${doc.verification_notes}
+                            </div>
+                        ` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
+// View document
+async function viewDocument(documentId) {
+    try {
+        showMessage('جاري تحميل المستند...', 'info');
+        
+        const response = await axios.get(`/api/admin/documents/${documentId}/view`);
+        
+        if (response.data.success) {
+            const docInfo = response.data.data;
+            
+            // Create document viewer modal
+            const viewerHtml = `
+                <div id="document-viewer-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-60 p-4">
+                    <div class="bg-white rounded-lg max-w-4xl w-full max-h-screen overflow-hidden">
+                        <!-- Viewer Header -->
+                        <div class="flex justify-between items-center p-4 border-b">
+                            <h3 class="text-lg font-semibold text-gray-800">
+                                <i class="fas fa-file-alt ml-2"></i>
+                                ${docInfo.document_info.document_name}
+                            </h3>
+                            <button onclick="closeDocumentViewer()" class="text-gray-500 hover:text-gray-700">
+                                <i class="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+                        
+                        <!-- Viewer Content -->
+                        <div class="p-4 text-center">
+                            <div class="mb-4">
+                                <p class="text-gray-600">مقدم الخدمة: ${docInfo.document_info.provider_name}</p>
+                                <p class="text-gray-600">اسم العمل: ${docInfo.document_info.business_name}</p>
+                                <p class="text-gray-600">حجم الملف: ${(docInfo.document_info.file_size / 1024).toFixed(0)} KB</p>
+                                <p class="text-gray-600">نوع الملف: ${docInfo.document_info.mime_type}</p>
+                            </div>
+                            
+                            ${docInfo.document_info.mime_type && docInfo.document_info.mime_type.startsWith('image/') && docInfo.view_url !== 'pending_upload' ? `
+                                <div class="bg-gray-100 p-4 rounded-lg">
+                                    <img src="${docInfo.view_url}" alt="${docInfo.document_info.document_name}" 
+                                         class="max-w-full max-h-96 mx-auto rounded shadow-lg">
+                                    <p class="text-sm text-gray-500 mt-2">انقر على الصورة لعرضها بحجم أكبر</p>
+                                </div>
+                            ` : `
+                                <div class="bg-gray-100 p-8 rounded-lg">
+                                    <i class="fas fa-file-alt text-6xl text-gray-400 mb-4"></i>
+                                    ${docInfo.view_url === 'pending_upload' ? `
+                                        <h4 class="text-lg font-semibold text-amber-600 mb-2">الوثيقة قيد المعالجة</h4>
+                                        <p class="text-amber-700 mb-3">لم يتم رفع الملف بعد أو قيد المراجعة</p>
+                                        <div class="bg-amber-100 border border-amber-300 p-3 rounded text-sm text-amber-800">
+                                            <p><strong>ملاحظة:</strong> يجب انتظار رفع الملف قبل المراجعة والموافقة</p>
+                                        </div>
+                                    ` : `
+                                        <p class="text-gray-600">معاينة المستند غير متاحة</p>
+                                        <p class="text-sm text-gray-500">يمكنك تحميل المستند لعرضه</p>
+                                    `}
+                                </div>
+                            `}
+                            
+                            <div class="mt-4 flex justify-center space-x-3 space-x-reverse">
+                                ${docInfo.view_url === 'pending_upload' ? `
+                                    <button disabled class="bg-gray-400 text-white px-4 py-2 rounded-lg cursor-not-allowed">
+                                        <i class="fas fa-clock ml-2"></i>
+                                        قيد المعالجة
+                                    </button>
+                                ` : `
+                                    <button onclick="downloadDocument(${documentId})" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors">
+                                        <i class="fas fa-download ml-2"></i>
+                                        تحميل
+                                    </button>
+                                `}
+                                <button onclick="closeDocumentViewer()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors">
+                                    إغلاق
+                                </button>
+                                ${docInfo.view_url !== 'pending_upload' ? `
+                                    <button onclick="approveDocument(${documentId})" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors">
+                                        <i class="fas fa-check ml-2"></i>
+                                        الموافقة على الوثيقة
+                                    </button>
+                                    <button onclick="rejectDocument(${documentId})" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors">
+                                        <i class="fas fa-times ml-2"></i>
+                                        رفض الوثيقة
+                                    </button>
+                                ` : `
+                                    <div class="bg-yellow-100 text-yellow-800 px-4 py-2 rounded-lg">
+                                        <i class="fas fa-exclamation-triangle ml-2"></i>
+                                        لا يمكن الموافقة على وثيقة لم يتم رفعها بعد
+                                    </div>
+                                `}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.insertAdjacentHTML('beforeend', viewerHtml);
+            
+        } else {
+            showMessage(response.data.error || 'حدث خطأ في عرض المستند', 'error');
+        }
+    } catch (error) {
+        console.error('Error viewing document:', error);
+        showMessage('حدث خطأ في عرض المستند', 'error');
+    }
+}
+
+// Download document
+function downloadDocument(documentId) {
+    window.open(`/api/admin/documents/${documentId}/download`, '_blank');
+}
+
+// Close document viewer
+function closeDocumentViewer() {
+    const modal = document.getElementById('document-viewer-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// Close user details modal
+function closeUserDetailsModal() {
+    const modal = document.getElementById('user-details-modal');
+    if (modal) {
+        modal.remove();
+    }
+    currentUserDetails = null;
+    currentUserDocuments = [];
+}
+
+// Check for new documents
+async function checkForNewDocuments() {
+    try {
+        const documentsResponse = await axios.get('/api/admin/documents/pending-count');
+        if (documentsResponse.data.success) {
+            const newPendingCount = documentsResponse.data.data.pending_documents || 0;
+            if (newPendingCount !== pendingDocuments) {
+                pendingDocuments = newPendingCount;
+                // Re-render only the navigation to update the badge
+                updateNavigationBadges();
+                
+                // Show notification if new documents are added
+                if (newPendingCount > 0) {
+                    console.log(`يوجد ${newPendingCount} وثيقة جديدة تحتاج لمراجعة`);
+                }
+            }
+        }
+    } catch (error) {
+        // Silent error - don't disturb user
+        console.log('Auto-refresh error:', error);
+    }
+}
+
+// Update navigation badges
+function updateNavigationBadges() {
+    // Update providers tab badge
+    const providersButton = document.querySelector('button[onclick="switchView(\'providers\')"]');
+    if (providersButton) {
+        const badgeHtml = `
+            مراجعة المزودين 
+            ${pendingProviders.length > 0 ? `<span class="bg-red-500 text-white text-xs px-2 py-1 rounded-full mr-1">${pendingProviders.length}</span>` : ''}
+            ${pendingDocuments && pendingDocuments > 0 ? `<span class="bg-orange-500 text-white text-xs px-2 py-1 rounded-full mr-1">${pendingDocuments} وثيقة</span>` : ''}
+        `;
+        providersButton.innerHTML = `<i class="fas fa-user-check ml-2"></i>${badgeHtml}`;
+    }
+}
+
+// Edit user (placeholder for future implementation)
+function editUser(userId) {
+    showMessage(`تعديل المستخدم رقم ${userId} - ميزة قيد التطوير`, 'info');
+}
+
