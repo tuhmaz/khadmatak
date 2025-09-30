@@ -990,8 +990,9 @@ async function rejectProvider(providerId, providerName) {
 // Perform provider verification
 async function performProviderVerification(providerId, action, notes = '') {
     try {
+        const statusAction = action === 'approved' ? 'approve' : action === 'rejected' ? 'reject' : action;
         const response = await axios.post(`/api/admin/providers/${providerId}/verify`, {
-            action: action,
+            action: statusAction,
             notes: notes
         });
         

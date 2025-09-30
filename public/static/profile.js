@@ -946,54 +946,68 @@ function loadCoverageAreas() {
 
 async function loadProviderServices() {
     try {
-        // In a real application, fetch provider's services from API
+        const response = await axios.get('/api/profile');
         const servicesContainer = document.getElementById('provider-services');
         
-        // Placeholder - no services yet
-        servicesContainer.innerHTML = `
-            <div class="col-span-full text-center text-gray-500 py-8">
-                <i class="fas fa-tools text-3xl mb-3"></i>
-                <p class="text-lg">لم تقم بإضافة أي خدمات بعد</p>
-                <p class="text-sm">انقر على "تعديل البيانات" لإضافة خدماتك</p>
-            </div>
-        `;
+        if (response.data.success && response.data.data.services && response.data.data.services.length > 0) {
+            const services = response.data.data.services;
+            servicesContainer.innerHTML = services.map(service => `
+                <div class="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 rounded-xl p-5 hover:shadow-lg transition-all duration-300 group relative">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="flex items-center">
+                            <div class="bg-blue-600 text-white rounded-lg p-3 group-hover:scale-110 transition-transform">
+                                <i class="${service.icon || 'fas fa-tools'} text-xl"></i>
+                            </div>
+                            <div class="mr-3">
+                                <h4 class="font-bold text-gray-800 text-lg">${service.name_ar}</h4>
+                                <p class="text-sm text-blue-600">خدمة نشطة</p>
+                            </div>
+                        </div>
+                        <button onclick="removeService(${service.id})" 
+                                class="remove-service-btn hidden text-red-500 hover:text-red-700 hover:bg-red-50 rounded-full p-2 transition-colors" 
+                                title="إزالة الخدمة">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    ${service.description_ar ? `<p class="text-sm text-gray-600 mt-2">${service.description_ar}</p>` : ''}
+                </div>
+            `).join('');
+            services.forEach(service => {
+                const checkbox = document.querySelector(`.service-category[value="${service.id}"]`);
+                if (checkbox) checkbox.checked = true;
+            });
+        } else {
+            servicesContainer.innerHTML = `
+                <div class="col-span-full text-center text-gray-500 py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                    <i class="fas fa-tools text-5xl mb-4 text-gray-400"></i>
+                    <p class="text-xl font-semibold mb-2">لم تقم بإضافة أي خدمات بعد</p>
+                    <p class="text-sm text-gray-500">انقر على "تعديل البيانات" لإضافة خدماتك والبدء في استقبال الطلبات</p>
+                </div>
+            `;
+        }
         
-        // Load available services for editing
-        const response = await axios.get('/api/categories');
-        if (response.data.success) {
+        const categoriesResponse = await axios.get('/api/categories');
+        if (categoriesResponse.data.success) {
             const availableServices = document.getElementById('available-services');
-            availableServices.innerHTML = response.data.data.map(category => `
-                <label class="flex items-center p-2 hover:bg-gray-50 rounded">
-                    <input type="checkbox" class="service-category ml-2" value="${category.id}" disabled>
-                    <i class="${category.icon} ml-2 text-blue-500"></i>
-                    ${category.name_ar}
+            availableServices.innerHTML = categoriesResponse.data.data.map(category => `
+                <label class="flex items-center p-3 hover:bg-blue-50 rounded-lg cursor-pointer transition-colors border border-transparent hover:border-blue-200">
+                    <input type="checkbox" class="service-category ml-2 w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500" value="${category.id}" disabled>
+                    <i class="${category.icon || 'fas fa-tools'} ml-2 text-blue-500 text-lg"></i>
+                    <span class="font-medium text-gray-700">${category.name_ar}</span>
                 </label>
             `).join('');
         }
-        
     } catch (error) {
         console.error('Error loading provider services:', error);
+        document.getElementById('provider-services').innerHTML = `
+            <div class="col-span-full text-center text-red-500 py-8">
+                <i class="fas fa-exclamation-triangle text-3xl mb-3"></i>
+                <p>حدث خطأ في تحميل الخدمات</p>
+            </div>
+        `;
     }
 }
 
-async function loadProviderDocuments() {
-    try {
-        // In a real application, fetch provider's documents from API
-        const documentsContainer = document.getElementById('provider-documents');
-        
-        // Placeholder - no documents yet
-        documentsContainer.innerHTML = `
-            <div class="col-span-full text-center text-gray-500 py-8">
-                <i class="fas fa-file-upload text-3xl mb-3"></i>
-                <p class="text-lg">لم تقم برفع أي وثائق بعد</p>
-                <p class="text-sm">قم برفع وثائقك للحصول على التحقق</p>
-            </div>
-        `;
-        
-    } catch (error) {
-        console.error('Error loading provider documents:', error);
-    }
-}
 
 // Provider tab switching
 function switchProviderTab(tabName) {
@@ -1022,42 +1036,40 @@ function switchProviderTab(tabName) {
 // Toggle edit mode
 function toggleEditMode() {
     isEditing = !isEditing;
-    
     const editBtn = document.getElementById('edit-profile-btn');
     const editActions = document.getElementById('edit-actions');
     const formInputs = document.querySelectorAll('input, textarea, select');
     
     if (isEditing) {
-        // Store original data
         originalProfileData = {};
         formInputs.forEach(input => {
-            if (input.id) {
-                originalProfileData[input.id] = input.value;
-            }
+            if (input.id) originalProfileData[input.id] = input.value;
         });
         
-        // Enable editing
         editBtn.innerHTML = '<i class="fas fa-times ml-2"></i>إلغاء التعديل';
         editActions.classList.remove('hidden');
         
         formInputs.forEach(input => {
-            // Keep user's email and display name readonly, but allow other name fields
-            if (!input.id.includes('email') && 
-                input.id !== 'customer_name' && 
-                input.id !== 'provider_name' &&
-                input.id !== 'user_name') {
+            if (!input.id.includes('email') && input.id !== 'customer_name' && input.id !== 'provider_name' && input.id !== 'user_name') {
                 input.disabled = false;
             }
         });
         
-        // Show edit sections for provider
         if (currentUser.user_type === 'provider') {
             const editServicesSection = document.getElementById('edit-services-section');
-            if (editServicesSection) {
-                editServicesSection.classList.remove('hidden');
-            }
+            if (editServicesSection) editServicesSection.classList.remove('hidden');
+            
+            document.querySelectorAll('.service-category').forEach(checkbox => {
+                checkbox.disabled = false;
+            });
+            
+            document.querySelectorAll('.remove-service-btn').forEach(btn => {
+                btn.classList.remove('hidden');
+            });
+            
+            // Show document delete buttons
+            toggleDocumentDeleteButtons(true);
         }
-        
     } else {
         cancelEdit();
     }
@@ -1065,12 +1077,10 @@ function toggleEditMode() {
 
 function cancelEdit() {
     isEditing = false;
-    
     const editBtn = document.getElementById('edit-profile-btn');
     const editActions = document.getElementById('edit-actions');
     const formInputs = document.querySelectorAll('input, textarea, select');
     
-    // Restore original values
     if (originalProfileData) {
         formInputs.forEach(input => {
             if (input.id && originalProfileData.hasOwnProperty(input.id)) {
@@ -1079,7 +1089,6 @@ function cancelEdit() {
         });
     }
     
-    // Disable editing
     editBtn.innerHTML = '<i class="fas fa-edit ml-2"></i>تعديل البيانات';
     editActions.classList.add('hidden');
     
@@ -1087,14 +1096,23 @@ function cancelEdit() {
         input.disabled = true;
     });
     
-    // Hide edit sections
     const editServicesSection = document.getElementById('edit-services-section');
-    if (editServicesSection) {
-        editServicesSection.classList.add('hidden');
-    }
+    if (editServicesSection) editServicesSection.classList.add('hidden');
+    
+    document.querySelectorAll('.service-category').forEach(checkbox => {
+        checkbox.disabled = true;
+    });
+    
+    document.querySelectorAll('.remove-service-btn').forEach(btn => {
+        btn.classList.add('hidden');
+    });
+    
+    // Hide document delete buttons
+    toggleDocumentDeleteButtons(false);
     
     originalProfileData = null;
 }
+
 
 function updateProviderServicesDisplay(services) {
     const servicesContainer = document.getElementById('provider-services');
@@ -1326,43 +1344,132 @@ async function loadProviderDocuments() {
     try {
         const response = await axios.get('/api/profile/documents');
         
-        if (response.data.success) {
+        const documentsContainer = document.getElementById('provider-documents');
+        
+        if (response.data.success && response.data.data && response.data.data.length > 0) {
             const documents = response.data.data;
-            const documentsContainer = document.getElementById('provider-documents-list');
             
-            if (documentsContainer) {
-                if (documents && documents.length > 0) {
-                    documentsContainer.innerHTML = documents.map(doc => {
-                        const statusClass = doc.verification_status === 'approved' ? 'status-approved' : 
-                                          doc.verification_status === 'rejected' ? 'status-rejected' : 'status-pending';
-                        const statusText = doc.verification_status === 'approved' ? 'معتمدة' : 
-                                         doc.verification_status === 'rejected' ? 'مرفوضة' : 'قيد المراجعة';
-                        
-                        return `
-                            <div class="bg-white rounded-lg border p-4">
-                                <div class="flex items-center justify-between mb-2">
-                                    <h4 class="font-medium text-gray-800">${getDocumentTypeName(doc.document_type)}</h4>
-                                    <span class="document-status ${statusClass}">${statusText}</span>
-                                </div>
-                                <p class="text-sm text-gray-600 mb-1">${doc.document_name}</p>
-                                <p class="text-xs text-gray-400">تم الرفع: ${formatDate(doc.uploaded_at)}</p>
-                                ${doc.verification_notes ? `<p class="text-xs text-red-600 mt-2">${doc.verification_notes}</p>` : ''}
-                            </div>
-                        `;
-                    }).join('');
-                } else {
-                    documentsContainer.innerHTML = `
-                        <div class="text-center text-gray-500 py-8">
-                            <i class="fas fa-file-upload text-3xl mb-3"></i>
-                            <p class="text-lg">لم يتم رفع أي وثائق بعد</p>
-                            <p class="text-sm">اذهب إلى صفحة رفع الوثائق لإضافة المستندات المطلوبة</p>
+            documentsContainer.innerHTML = documents.map(doc => {
+                // Determine status styling
+                let statusBadge = '';
+                let statusIcon = '';
+                let actionButtons = '';
+                
+                if (doc.verification_status === 'approved') {
+                    statusBadge = '<span class="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800"><i class="fas fa-check-circle ml-1"></i>معتمدة</span>';
+                    statusIcon = '<div class="absolute top-2 left-2 bg-green-500 text-white rounded-full p-2"><i class="fas fa-check text-sm"></i></div>';
+                } else if (doc.verification_status === 'rejected') {
+                    statusBadge = '<span class="px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800"><i class="fas fa-times-circle ml-1"></i>مرفوضة</span>';
+                    statusIcon = '<div class="absolute top-2 left-2 bg-red-500 text-white rounded-full p-2"><i class="fas fa-times text-sm"></i></div>';
+                } else if (doc.verification_status === 'pending') {
+                    statusBadge = '<span class="px-3 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800"><i class="fas fa-clock ml-1"></i>قيد المراجعة</span>';
+                    statusIcon = '<div class="absolute top-2 left-2 bg-yellow-500 text-white rounded-full p-2"><i class="fas fa-hourglass-half text-sm"></i></div>';
+                }
+                
+                // Check if document has pending deletion request
+                if (doc.deletion_status === 'pending') {
+                    statusBadge = '<span class="px-3 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800"><i class="fas fa-exclamation-triangle ml-1"></i>طلب حذف معلق</span>';
+                    actionButtons = `
+                        <div class="mt-3 p-2 bg-orange-50 rounded-lg border border-orange-200">
+                            <p class="text-xs text-orange-800 mb-1"><strong>سبب الحذف:</strong> ${doc.deletion_reason || 'غير محدد'}</p>
+                            <p class="text-xs text-gray-600">في انتظار موافقة الإدارة</p>
                         </div>
                     `;
+                } else if (doc.deletion_status === 'approved') {
+                    // Document will be deleted, show message
+                    return '';
+                } else {
+                    // Show delete button
+                    actionButtons = `
+                        <button onclick="requestDocumentDeletion(${doc.id}, '${doc.document_name}')" 
+                                class="document-delete-btn hidden mt-3 w-full btn-danger text-sm py-2">
+                            <i class="fas fa-trash-alt ml-2"></i>
+                            طلب حذف الوثيقة
+                        </button>
+                    `;
                 }
+                
+                return `
+                    <div class="bg-gradient-to-br from-white to-gray-50 rounded-xl border-2 border-gray-200 p-5 hover:shadow-lg transition-all duration-300 relative group">
+                        ${statusIcon}
+                        
+                        <div class="pr-12">
+                            <div class="flex items-start justify-between mb-3">
+                                <div class="flex-1">
+                                    <h4 class="font-bold text-gray-800 text-lg mb-1">
+                                        <i class="fas fa-file-alt ml-2 text-purple-500"></i>
+                                        ${getDocumentTypeName(doc.document_type)}
+                                    </h4>
+                                    ${statusBadge}
+                                </div>
+                            </div>
+                            
+                            <div class="space-y-2 text-sm">
+                                <div class="flex items-center text-gray-600">
+                                    <i class="fas fa-file-signature ml-2 text-gray-400 w-5"></i>
+                                    <span class="font-medium">اسم الملف:</span>
+                                    <span class="mr-2">${doc.document_name || 'غير محدد'}</span>
+                                </div>
+                                
+                                <div class="flex items-center text-gray-600">
+                                    <i class="fas fa-calendar-alt ml-2 text-gray-400 w-5"></i>
+                                    <span class="font-medium">تاريخ الرفع:</span>
+                                    <span class="mr-2">${formatDate(doc.uploaded_at)}</span>
+                                </div>
+                                
+                                ${doc.file_url ? `
+                                    <a href="${doc.file_url}" target="_blank" class="flex items-center text-blue-600 hover:text-blue-800 transition-colors">
+                                        <i class="fas fa-external-link-alt ml-2 w-5"></i>
+                                        <span class="font-medium underline">عرض الوثيقة</span>
+                                    </a>
+                                ` : ''}
+                            </div>
+                            
+                            ${doc.verification_notes ? `
+                                <div class="mt-3 p-3 bg-red-50 rounded-lg border border-red-200">
+                                    <p class="text-xs font-semibold text-red-800 mb-1">
+                                        <i class="fas fa-info-circle ml-1"></i>
+                                        ملاحظات الإدارة:
+                                    </p>
+                                    <p class="text-xs text-red-700">${doc.verification_notes}</p>
+                                </div>
+                            ` : ''}
+                            
+                            ${actionButtons}
+                        </div>
+                    </div>
+                `;
+            }).filter(html => html !== '').join('');
+            
+            if (documentsContainer.innerHTML.trim() === '') {
+                documentsContainer.innerHTML = `
+                    <div class="col-span-full text-center text-gray-500 py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                        <i class="fas fa-file-upload text-5xl mb-4 text-gray-400"></i>
+                        <p class="text-xl font-semibold mb-2">لم يتم رفع أي وثائق بعد</p>
+                        <p class="text-sm text-gray-500">قم برفع وثائقك للحصول على التحقق من الإدارة</p>
+                    </div>
+                `;
             }
+        } else {
+            documentsContainer.innerHTML = `
+                <div class="col-span-full text-center text-gray-500 py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                    <i class="fas fa-file-upload text-5xl mb-4 text-gray-400"></i>
+                    <p class="text-xl font-semibold mb-2">لم يتم رفع أي وثائق بعد</p>
+                    <p class="text-sm text-gray-500">قم برفع وثائقك للحصول على التحقق من الإدارة</p>
+                </div>
+            `;
         }
     } catch (error) {
-        console.warn('Error loading documents:', error);
+        console.error('Error loading documents:', error);
+        const documentsContainer = document.getElementById('provider-documents');
+        if (documentsContainer) {
+            documentsContainer.innerHTML = `
+                <div class="col-span-full text-center text-red-500 py-8">
+                    <i class="fas fa-exclamation-triangle text-3xl mb-3"></i>
+                    <p>حدث خطأ في تحميل الوثائق</p>
+                </div>
+            `;
+        }
     }
 }
 
@@ -1381,4 +1488,104 @@ function formatDate(dateString) {
     if (!dateString) return '';
     const date = new Date(dateString);
     return date.toLocaleDateString('ar-SA');
+}
+
+// ===== ENHANCED SERVICES MANAGEMENT =====
+
+// Request document deletion with reason
+async function requestDocumentDeletion(documentId, documentName) {
+    // Show modal to get deletion reason
+    const reason = prompt(`طلب حذف الوثيقة: ${documentName}\n\nيرجى ذكر سبب طلب الحذف:\n(سيتم إرسال الطلب للإدارة للموافقة)`);
+    
+    if (!reason || reason.trim() === '') {
+        showError('يجب ذكر سبب الحذف');
+        return;
+    }
+    
+    if (!confirm(`هل أنت متأكد من طلب حذف هذه الوثيقة؟\n\nالوثيقة: ${documentName}\nالسبب: ${reason}\n\nسيتم إرسال الطلب للإدارة للموافقة.`)) {
+        return;
+    }
+    
+    try {
+        showLoading('جاري إرسال طلب الحذف...');
+        
+        const response = await axios.post(`/api/profile/documents/${documentId}/request-deletion`, {
+            reason: reason.trim()
+        });
+        
+        if (response.data.success) {
+            hideLoading();
+            showSuccess('تم إرسال طلب الحذف بنجاح!\n\nسيتم مراجعة الطلب من قبل الإدارة.');
+            
+            // Reload documents to show updated status
+            await loadProviderDocuments();
+        } else {
+            throw new Error(response.data.error || 'فشل في إرسال طلب الحذف');
+        }
+    } catch (error) {
+        console.error('Error requesting document deletion:', error);
+        hideLoading();
+        showError(error.response?.data?.error || error.message || 'حدث خطأ في إرسال طلب الحذف');
+    }
+}
+
+// Toggle document delete buttons visibility
+function toggleDocumentDeleteButtons(show) {
+    const deleteButtons = document.querySelectorAll('.document-delete-btn');
+    deleteButtons.forEach(btn => {
+        if (show) {
+            btn.classList.remove('hidden');
+        } else {
+            btn.classList.add('hidden');
+        }
+    });
+}
+
+// Remove a service from provider's list
+async function removeService(serviceId) {
+    if (!confirm('هل أنت متأكد من إزالة هذه الخدمة؟\n\nسيتم إخفاؤك من نتائج البحث لهذه الخدمة.')) {
+        return;
+    }
+    
+    try {
+        showLoading('جاري إزالة الخدمة...');
+        
+        const response = await axios.delete(`/api/profile/services/${serviceId}`);
+        
+        if (response.data.success) {
+            hideLoading();
+            showSuccess('تم إزالة الخدمة بنجاح');
+            
+            // Uncheck the service in available services
+            const checkbox = document.querySelector(`.service-category[value="${serviceId}"]`);
+            if (checkbox) checkbox.checked = false;
+            
+            // Remove the service card from DOM immediately
+            const serviceCards = document.querySelectorAll('#provider-services > div');
+            serviceCards.forEach(card => {
+                const removeBtn = card.querySelector(`button[onclick="removeService(${serviceId})"]`);
+                if (removeBtn) {
+                    card.remove();
+                }
+            });
+            
+            // Check if no services left, show empty state
+            const servicesContainer = document.getElementById('provider-services');
+            if (servicesContainer && servicesContainer.children.length === 0) {
+                servicesContainer.innerHTML = `
+                    <div class="col-span-full text-center text-gray-500 py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                        <i class="fas fa-tools text-5xl mb-4 text-gray-400"></i>
+                        <p class="text-xl font-semibold mb-2">لم تقم بإضافة أي خدمات بعد</p>
+                        <p class="text-sm text-gray-500">انقر على "تعديل البيانات" لإضافة خدماتك والبدء في استقبال الطلبات</p>
+                    </div>
+                `;
+            }
+        } else {
+            throw new Error(response.data.error || 'فشل في إزالة الخدمة');
+        }
+    } catch (error) {
+        console.error('Error removing service:', error);
+        hideLoading();
+        showError(error.response?.data?.error || error.message || 'حدث خطأ في إزالة الخدمة');
+    }
 }
