@@ -822,6 +822,20 @@ app.post('/api/register/provider', async (c) => {
   }
 });
 
+// Helper function to convert File to base64 data URL for storage
+async function fileToDataURL(file: File): Promise<string> {
+  const arrayBuffer = await file.arrayBuffer();
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+  return `data:${file.type};base64,${base64}`;
+}
+
+// Helper function to generate document URL
+function generateDocumentURL(documentId: number, filename: string): string {
+  const timestamp = Date.now();
+  const randomId = Math.random().toString(36).substring(2, 15);
+  return `/api/documents/${documentId}/${encodeURIComponent(filename)}?t=${timestamp}&r=${randomId}`;
+}
+
 // Provider Document Upload endpoint
 app.post('/api/provider/upload-documents', async (c) => {
   try {
@@ -859,59 +873,136 @@ app.post('/api/provider/upload-documents', async (c) => {
     const userId = decoded.id;
     const uploadedDocuments: any[] = [];
 
-    // Process files (for now, we'll store metadata only)
-    // In production, you would upload to Cloudflare R2 or similar storage
+    console.log('Processing document uploads for user:', userId);
     
     if (nationalIdFile) {
+      console.log('Processing national ID file:', nationalIdFile.name, nationalIdFile.size);
+      
+      // Convert file to base64 for storage
+      const fileContent = await fileToDataURL(nationalIdFile);
+      
       const docRecord = await env.DB.prepare(`
-        INSERT INTO provider_documents (provider_id, document_type, document_url, document_name, file_size)
+        INSERT INTO provider_documents (
+          provider_id, document_type, document_name, file_size, mime_type, 
+          file_content, document_url, verification_status, uploaded_at
+        )
         VALUES (
           (SELECT id FROM provider_profiles WHERE user_id = ?),
-          'national_id', 'pending_upload', ?, ?
+          'national_id', ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP
         )
-      `).bind(userId, nationalIdFile.name, nationalIdFile.size).run();
+      `).bind(
+        userId, 
+        nationalIdFile.name, 
+        nationalIdFile.size, 
+        nationalIdFile.type,
+        fileContent,
+        generateDocumentURL(0, nationalIdFile.name) // Temporary URL, will be updated below
+      ).run();
+      
+      const documentId = docRecord.meta.last_row_id;
+      const documentURL = generateDocumentURL(Number(documentId), nationalIdFile.name);
+      
+      // Update with correct document URL
+      await env.DB.prepare(`
+        UPDATE provider_documents 
+        SET document_url = ? 
+        WHERE id = ?
+      `).bind(documentURL, documentId).run();
       
       uploadedDocuments.push({
-        id: docRecord.meta.last_row_id,
+        id: documentId,
         type: 'national_id',
         filename: nationalIdFile.name,
-        size: nationalIdFile.size
+        size: nationalIdFile.size,
+        url: documentURL
       });
     }
 
     if (businessLicenseFile) {
+      console.log('Processing business license file:', businessLicenseFile.name, businessLicenseFile.size);
+      
+      // Convert file to base64 for storage
+      const fileContent = await fileToDataURL(businessLicenseFile);
+      
       const docRecord = await env.DB.prepare(`
-        INSERT INTO provider_documents (provider_id, document_type, document_url, document_name, file_size)
+        INSERT INTO provider_documents (
+          provider_id, document_type, document_name, file_size, mime_type,
+          file_content, document_url, verification_status, uploaded_at
+        )
         VALUES (
           (SELECT id FROM provider_profiles WHERE user_id = ?),
-          'business_license', 'pending_upload', ?, ?
+          'business_license', ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP
         )
-      `).bind(userId, businessLicenseFile.name, businessLicenseFile.size).run();
+      `).bind(
+        userId, 
+        businessLicenseFile.name, 
+        businessLicenseFile.size, 
+        businessLicenseFile.type,
+        fileContent,
+        generateDocumentURL(0, businessLicenseFile.name)
+      ).run();
+      
+      const documentId = docRecord.meta.last_row_id;
+      const documentURL = generateDocumentURL(Number(documentId), businessLicenseFile.name);
+      
+      // Update with correct document URL
+      await env.DB.prepare(`
+        UPDATE provider_documents 
+        SET document_url = ? 
+        WHERE id = ?
+      `).bind(documentURL, documentId).run();
       
       uploadedDocuments.push({
-        id: docRecord.meta.last_row_id,
+        id: documentId,
         type: 'business_license',
         filename: businessLicenseFile.name,
-        size: businessLicenseFile.size
+        size: businessLicenseFile.size,
+        url: documentURL
       });
     }
 
     // Process portfolio files
     for (const portfolioFile of portfolioFiles) {
       if (portfolioFile instanceof File) {
+        console.log('Processing portfolio file:', portfolioFile.name, portfolioFile.size);
+        
+        // Convert file to base64 for storage
+        const fileContent = await fileToDataURL(portfolioFile);
+        
         const docRecord = await env.DB.prepare(`
-          INSERT INTO provider_documents (provider_id, document_type, document_url, document_name, file_size)
+          INSERT INTO provider_documents (
+            provider_id, document_type, document_name, file_size, mime_type,
+            file_content, document_url, verification_status, uploaded_at
+          )
           VALUES (
             (SELECT id FROM provider_profiles WHERE user_id = ?),
-            'portfolio', 'pending_upload', ?, ?
+            'portfolio', ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP
           )
-        `).bind(userId, portfolioFile.name, portfolioFile.size).run();
+        `).bind(
+          userId, 
+          portfolioFile.name, 
+          portfolioFile.size, 
+          portfolioFile.type,
+          fileContent,
+          generateDocumentURL(0, portfolioFile.name)
+        ).run();
+        
+        const documentId = docRecord.meta.last_row_id;
+        const documentURL = generateDocumentURL(Number(documentId), portfolioFile.name);
+        
+        // Update with correct document URL
+        await env.DB.prepare(`
+          UPDATE provider_documents 
+          SET document_url = ? 
+          WHERE id = ?
+        `).bind(documentURL, documentId).run();
         
         uploadedDocuments.push({
-          id: docRecord.meta.last_row_id,
+          id: documentId,
           type: 'portfolio',
           filename: portfolioFile.name,
-          size: portfolioFile.size
+          size: portfolioFile.size,
+          url: documentURL
         });
       }
     }
@@ -1250,6 +1341,88 @@ app.post('/api/admin/verify-document', async (c) => {
     return c.json({ 
       success: false, 
       error: 'حدث خطأ في التحقق من الوثيقة' 
+    }, 500);
+  }
+});
+
+// Admin: Verify Provider (Approve/Reject)
+app.post('/api/admin/providers/:providerId/verify', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ 
+        success: false, 
+        error: 'يجب تسجيل الدخول أولاً' 
+      }, 401);
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    const decoded = await verifyJWT(token);
+    
+    if (!decoded || decoded.user_type !== 'admin') {
+      return c.json({ 
+        success: false, 
+        error: 'غير مصرح بالوصول - إدارة فقط' 
+      }, 403);
+    }
+
+    const providerId = c.req.param('providerId');
+    const { action, notes } = await c.req.json();
+
+    // Validate action
+    if (!action || !['approve', 'reject'].includes(action)) {
+      return c.json({ 
+        success: false, 
+        error: 'يجب تحديد إجراء صالح: approve أو reject' 
+      }, 400);
+    }
+
+    const { env } = c;
+
+    // Check if provider exists
+    const provider = await env.DB.prepare(
+      'SELECT id FROM provider_profiles WHERE id = ?'
+    ).bind(providerId).first();
+
+    if (!provider) {
+      return c.json({ 
+        success: false, 
+        error: 'مقدم الخدمة غير موجود' 
+      }, 404);
+    }
+
+    // Update provider verification status
+    const verificationStatus = action === 'approve' ? 'approved' : 'rejected';
+    
+    await env.DB.prepare(`
+      UPDATE provider_profiles 
+      SET verification_status = ?, 
+          verification_date = CURRENT_TIMESTAMP,
+          verification_notes = ?
+      WHERE id = ?
+    `).bind(verificationStatus, notes || null, providerId).run();
+
+    // If approved, also activate the user account
+    if (action === 'approve') {
+      await env.DB.prepare(`
+        UPDATE users 
+        SET verified = TRUE, active = TRUE
+        WHERE id = (SELECT user_id FROM provider_profiles WHERE id = ?)
+      `).bind(providerId).run();
+    }
+
+    return c.json({ 
+      success: true, 
+      message: action === 'approve' 
+        ? 'تم قبول مقدم الخدمة وتفعيل حسابه'
+        : 'تم رفض مقدم الخدمة'
+    });
+
+  } catch (error) {
+    console.error('Error verifying provider:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في مراجعة مقدم الخدمة' 
     }, 500);
   }
 });
@@ -3829,6 +4002,87 @@ app.get('/api/admin/documents/pending-list', authMiddleware, async (c) => {
   }
 });
 
+// Serve Document Files (for both admin and provider access)
+app.get('/api/documents/:documentId/:filename', async (c) => {
+  try {
+    const documentId = c.req.param('documentId');
+    const filename = c.req.param('filename');
+    const { env } = c;
+    
+    console.log('Serving document:', documentId, filename);
+    
+    // Get document information from database
+    const document = await env.DB.prepare(`
+      SELECT 
+        pd.id,
+        pd.document_name,
+        pd.file_content,
+        pd.mime_type,
+        pd.file_size,
+        pd.verification_status,
+        pp.business_name,
+        u.name as provider_name
+      FROM provider_documents pd
+      JOIN provider_profiles pp ON pd.provider_id = pp.id
+      JOIN users u ON pp.user_id = u.id
+      WHERE pd.id = ?
+    `).bind(documentId).first() as any;
+
+    if (!document) {
+      return c.json({ 
+        success: false, 
+        error: 'المستند غير موجود' 
+      }, 404);
+    }
+
+    if (!document.file_content) {
+      return c.json({ 
+        success: false, 
+        error: 'محتوى الملف غير متوفر' 
+      }, 404);
+    }
+
+    // Parse base64 data URL
+    const dataUrlMatch = document.file_content.match(/^data:([^;]+);base64,(.+)$/);
+    if (!dataUrlMatch) {
+      return c.json({ 
+        success: false, 
+        error: 'تنسيق الملف غير صحيح' 
+      }, 400);
+    }
+
+    const [, mimeType, base64Data] = dataUrlMatch;
+    
+    // Convert base64 to binary
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    // Set appropriate headers
+    const headers = new Headers({
+      'Content-Type': mimeType || document.mime_type || 'application/octet-stream',
+      'Content-Length': bytes.length.toString(),
+      'Content-Disposition': `inline; filename="${encodeURIComponent(document.document_name)}"`,
+      'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
+      'Access-Control-Allow-Origin': '*'
+    });
+
+    return new Response(bytes, {
+      status: 200,
+      headers: headers
+    });
+
+  } catch (error) {
+    console.error('Error serving document:', error);
+    return c.json({ 
+      success: false, 
+      error: 'حدث خطأ في عرض المستند' 
+    }, 500);
+  }
+});
+
 // Admin: Download Document
 app.get('/api/admin/documents/:documentId/download', authMiddleware, async (c) => {
   try {
@@ -3849,8 +4103,9 @@ app.get('/api/admin/documents/:documentId/download', authMiddleware, async (c) =
       SELECT 
         pd.id,
         pd.document_name,
-        pd.document_url,
+        pd.file_content,
         pd.mime_type,
+        pd.file_size,
         pp.business_name,
         u.name as provider_name
       FROM provider_documents pd
@@ -3866,17 +4121,42 @@ app.get('/api/admin/documents/:documentId/download', authMiddleware, async (c) =
       }, 404);
     }
 
-    // If document URL is available and not pending_upload, redirect to it
-    if (document.document_url && !document.document_url.includes('pending_upload')) {
-      // For external URLs, redirect to them for download
-      return c.redirect(document.document_url);
-    } else {
-      // Document not uploaded yet
+    if (!document.file_content) {
       return c.json({ 
         success: false, 
-        error: 'الوثيقة لم يتم رفعها بعد - لا يمكن التحميل' 
+        error: 'محتوى الملف غير متوفر' 
+      }, 404);
+    }
+
+    // Parse base64 data URL
+    const dataUrlMatch = document.file_content.match(/^data:([^;]+);base64,(.+)$/);
+    if (!dataUrlMatch) {
+      return c.json({ 
+        success: false, 
+        error: 'تنسيق الملف غير صحيح' 
       }, 400);
     }
+
+    const [, mimeType, base64Data] = dataUrlMatch;
+    
+    // Convert base64 to binary
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    // Set download headers
+    const headers = new Headers({
+      'Content-Type': mimeType || document.mime_type || 'application/octet-stream',
+      'Content-Length': bytes.length.toString(),
+      'Content-Disposition': `attachment; filename="${encodeURIComponent(document.document_name)}"`,
+    });
+
+    return new Response(bytes, {
+      status: 200,
+      headers: headers
+    });
 
   } catch (error) {
     console.error('Error downloading document:', error);

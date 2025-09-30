@@ -806,7 +806,7 @@ async function loadProviderData() {
             const verificationStatus = document.getElementById('verification-status');
             const status = profile.verification_status || 'pending';
             
-            if (status === 'verified') {
+            if (status === 'verified' || status === 'approved') {
                 verificationStatus.className = 'px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800';
                 verificationStatus.innerHTML = '<i class="fas fa-check-circle ml-1"></i> معتمد';
             } else if (status === 'rejected') {

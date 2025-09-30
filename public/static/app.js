@@ -1429,6 +1429,7 @@ function formatFileSize(bytes) {
 function getVerificationBadge(status) {
     switch (status) {
         case 'verified':
+        case 'approved':
             return '<span class="badge badge-success"><i class="fas fa-check ml-1"></i>تم التحقق</span>';
         case 'rejected':
             return '<span class="badge badge-error"><i class="fas fa-times ml-1"></i>مرفوض</span>';

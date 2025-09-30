@@ -860,7 +860,7 @@ function showReviewModal(documents) {
                                    'مستند آخر';
             
             const fileSizeKB = doc.file_size ? Math.round(doc.file_size / 1024) : 0;
-            const isPendingUpload = doc.document_url === 'pending_upload';
+            const isPendingUpload = !isDocumentViewable(doc);
             
             return `
                 <div class="border rounded-lg p-4 mb-4 ${isPendingUpload ? 'border-orange-300 bg-orange-50' : 'border-gray-200'}">
@@ -878,12 +878,12 @@ function showReviewModal(documents) {
                     </div>
                     
                     ${isPendingUpload ? `
-                        <div class="bg-orange-100 border border-orange-200 p-3 rounded-lg mb-3">
-                            <div class="flex items-center text-orange-800">
-                                <i class="fas fa-clock mr-2"></i>
-                                <span class="font-medium">الوثيقة قيد المعالجة</span>
+                        <div class="bg-red-100 border border-red-200 p-3 rounded-lg mb-3">
+                            <div class="flex items-center text-red-800">
+                                <i class="fas fa-exclamation-triangle mr-2"></i>
+                                <span class="font-medium">مشكلة في الملف</span>
                             </div>
-                            <p class="text-sm text-orange-700 mt-1">لم يتم رفع الملف بعد أو قيد المراجعة</p>
+                            <p class="text-sm text-red-700 mt-1">الملف غير متوفر أو تالف - يرجى طلب إعادة الرفع من المزود</p>
                         </div>
                     ` : `
                         <div class="mb-3">
@@ -990,8 +990,7 @@ async function rejectProvider(providerId, providerName) {
 // Perform provider verification
 async function performProviderVerification(providerId, action, notes = '') {
     try {
-        const response = await axios.post('/api/admin/verify-provider', {
-            provider_id: providerId,
+        const response = await axios.post(`/api/admin/providers/${providerId}/verify`, {
             action: action,
             notes: notes
         });
@@ -1654,6 +1653,16 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+// Helper function to check if document is viewable
+function isDocumentViewable(doc) {
+    // Check if document URL exists and is properly formatted
+    return doc.document_url && 
+           doc.document_url !== 'pending_upload' && 
+           doc.document_url.startsWith('/api/documents/') &&
+           doc.file_size && 
+           doc.file_size > 0;
+}
+
 // View User Details - Complete Implementation
 async function viewUserDetails(userId) {
     try {
@@ -1728,7 +1737,7 @@ function showUserDetailsModal(userData) {
                 const documentTypeText = getDocumentTypeText(doc.document_type);
                 
                 // Check if document is viewable
-                const isViewable = doc.document_url && !doc.document_url.includes('pending_upload');
+                const isViewable = isDocumentViewable(doc);
                 const isImage = doc.document_name && doc.document_name.match(/\.(jpg|jpeg|png|gif|bmp|webp)$/i);
                 const isPdf = doc.document_name && doc.document_name.match(/\.pdf$/i);
                 
@@ -1774,8 +1783,8 @@ function showUserDetailsModal(userData) {
                                 </a>
                             ` : `
                                 <span class="text-xs bg-orange-100 text-orange-800 px-3 py-1.5 rounded-lg">
-                                    <i class="fas fa-clock mr-1"></i>
-                                    لم يتم رفع الملف بعد
+                                    <i class="fas fa-exclamation-triangle mr-1"></i>
+                                    الملف غير متوفر - خطأ في الرفع
                                 </span>
                             `}
                             
@@ -2100,5 +2109,104 @@ document.addEventListener('click', function(event) {
         }
     }
 });
+
+// Approve Document (direct action)
+async function approveDocument(documentId, notes = '') {
+    try {
+        const response = await axios.post('/api/admin/verify-document', {
+            document_id: documentId,
+            status: 'approved',
+            notes: notes
+        });
+        
+        if (response.data.success) {
+            showMessage(response.data.message, 'success');
+            
+            // Reload the documents list
+            await reloadPendingDocuments();
+            
+            // If we're in providers view, reload that too
+            if (currentView === 'providers') {
+                renderProvidersView();
+            }
+        } else {
+            showMessage(response.data.error || 'حدث خطأ في العملية', 'error');
+        }
+    } catch (error) {
+        console.error('Error approving document:', error);
+        showMessage('حدث خطأ في العملية', 'error');
+    }
+}
+
+// Reject Document (direct action) 
+async function rejectDocument(documentId) {
+    try {
+        const notes = prompt('سبب رفض الوثيقة (اختياري):') || '';
+        
+        const response = await axios.post('/api/admin/verify-document', {
+            document_id: documentId,
+            status: 'rejected',
+            notes: notes
+        });
+        
+        if (response.data.success) {
+            showMessage(response.data.message, 'success');
+            
+            // Reload the documents list
+            await reloadPendingDocuments();
+            
+            // If we're in providers view, reload that too
+            if (currentView === 'providers') {
+                renderProvidersView();
+            }
+        } else {
+            showMessage(response.data.error || 'حدث خطأ في العملية', 'error');
+        }
+    } catch (error) {
+        console.error('Error rejecting document:', error);
+        showMessage('حدث خطأ في العملية', 'error');
+    }
+}
+
+// Verify Document (Approve/Reject) - Generic function
+async function verifyDocument(documentId, status, notes = '') {
+    try {
+        // Show confirmation dialog
+        const actionText = status === 'approved' ? 'قبول' : 'رفض';
+        const confirmMessage = `هل أنت متأكد من ${actionText} هذه الوثيقة؟`;
+        
+        if (!confirm(confirmMessage)) {
+            return;
+        }
+        
+        // If rejecting, ask for notes
+        if (status === 'rejected' && !notes) {
+            notes = prompt('سبب الرفض (اختياري):') || '';
+        }
+        
+        const response = await axios.post('/api/admin/verify-document', {
+            document_id: documentId,
+            status: status,
+            notes: notes
+        });
+        
+        if (response.data.success) {
+            showMessage(response.data.message, 'success');
+            
+            // Reload the documents list
+            await reloadPendingDocuments();
+            
+            // If we're in providers view, reload that too
+            if (currentView === 'providers') {
+                renderProvidersView();
+            }
+        } else {
+            showMessage(response.data.error || 'حدث خطأ في العملية', 'error');
+        }
+    } catch (error) {
+        console.error('Error verifying document:', error);
+        showMessage('حدث خطأ في العملية', 'error');
+    }
+}
 
 console.log('Complete Admin Panel JavaScript loaded successfully!');
