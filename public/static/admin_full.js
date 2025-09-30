@@ -1678,10 +1678,11 @@ function showUserDetailsModal(userData) {
     const modal = document.createElement('div');
     modal.id = 'user-details-modal';
     modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+    modal.dataset.userId = userData.user.id; // Store user ID for refresh
     
     const user = userData.user;
-    const profile = userData.profile;
-    const stats = userData.stats;
+    const profile = userData.provider_profile || userData.profile;
+    const stats = userData.statistics || userData.stats;
     const documents = userData.documents || [];
     
     let profileSection = '';
@@ -1722,23 +1723,74 @@ function showUserDetailsModal(userData) {
                                   'bg-yellow-100 text-yellow-800';
                 
                 const statusText = getVerificationStatusText(doc.verification_status);
+                const fileSizeText = formatFileSize(doc.file_size);
+                const uploadDate = new Date(doc.uploaded_at).toLocaleDateString('ar-JO');
+                const documentTypeText = getDocumentTypeText(doc.document_type);
+                
+                // Check if document is viewable
+                const isViewable = doc.document_url && !doc.document_url.includes('pending_upload');
+                const isImage = doc.document_name && doc.document_name.match(/\.(jpg|jpeg|png|gif|bmp|webp)$/i);
+                const isPdf = doc.document_name && doc.document_name.match(/\.pdf$/i);
                 
                 return `
-                    <div class="bg-gray-50 p-3 rounded border">
-                        <div class="flex items-center justify-between mb-2">
-                            <span class="font-medium">${doc.document_name}</span>
-                            <span class="px-2 py-1 rounded text-xs ${statusClass}">${statusText}</span>
+                    <div class="bg-white border-l-4 ${doc.verification_status === 'approved' ? 'border-green-400' : 
+                                                      doc.verification_status === 'rejected' ? 'border-red-400' : 
+                                                      'border-yellow-400'} p-4 rounded-r shadow-sm hover:shadow-md transition-shadow">
+                        <div class="flex items-start justify-between mb-3">
+                            <div class="flex-1">
+                                <div class="flex items-center mb-1">
+                                    <i class="fas fa-${isImage ? 'image' : isPdf ? 'file-pdf' : 'file'} text-gray-500 mr-2"></i>
+                                    <span class="font-semibold text-gray-800">${doc.document_name}</span>
+                                </div>
+                                <div class="text-sm text-gray-600 space-y-1">
+                                    <div><strong>النوع:</strong> ${documentTypeText}</div>
+                                    <div><strong>الحجم:</strong> ${fileSizeText}</div>
+                                    <div><strong>تاريخ الرفع:</strong> ${uploadDate}</div>
+                                    ${doc.mime_type ? `<div><strong>نوع الملف:</strong> ${doc.mime_type}</div>` : ''}
+                                    ${doc.verification_notes ? `<div><strong>ملاحظات المراجع:</strong> <span class="text-orange-600">${doc.verification_notes}</span></div>` : ''}
+                                </div>
+                            </div>
+                            <span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">${statusText}</span>
                         </div>
-                        <div class="text-sm text-gray-600">
-                            <div>النوع: ${getDocumentTypeText(doc.document_type)}</div>
-                            <div>تاريخ الرفع: ${new Date(doc.uploaded_at).toLocaleDateString('ar-JO')}</div>
-                            ${doc.verification_notes ? `<div>الملاحظات: ${doc.verification_notes}</div>` : ''}
-                        </div>
-                        <div class="mt-2 flex space-x-2 space-x-reverse">
-                            <button onclick="viewDocument(${doc.id})" 
-                                    class="text-xs bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-1 rounded">
-                                <i class="fas fa-eye"></i> عرض
-                            </button>
+                        
+                        <div class="flex flex-wrap items-center gap-2 mt-3">
+                            ${isViewable ? `
+                                <button onclick="viewDocument(${doc.id})" 
+                                        class="text-xs bg-blue-600 text-white hover:bg-blue-700 px-3 py-1.5 rounded-lg transition-colors flex items-center">
+                                    <i class="fas fa-eye mr-1"></i>
+                                    معاينة
+                                </button>
+                                
+                                <a href="${doc.document_url}" target="_blank"
+                                   class="text-xs bg-green-600 text-white hover:bg-green-700 px-3 py-1.5 rounded-lg transition-colors inline-flex items-center">
+                                    <i class="fas fa-external-link-alt mr-1"></i>
+                                    فتح في نافذة جديدة
+                                </a>
+                                
+                                <a href="/api/admin/documents/${doc.id}/download"
+                                   class="text-xs bg-gray-600 text-white hover:bg-gray-700 px-3 py-1.5 rounded-lg transition-colors inline-flex items-center">
+                                    <i class="fas fa-download mr-1"></i>
+                                    تحميل
+                                </a>
+                            ` : `
+                                <span class="text-xs bg-orange-100 text-orange-800 px-3 py-1.5 rounded-lg">
+                                    <i class="fas fa-clock mr-1"></i>
+                                    لم يتم رفع الملف بعد
+                                </span>
+                            `}
+                            
+                            ${doc.verification_status === 'pending' ? `
+                                <button onclick="quickApproveDocumentFromDetails(${doc.id}, '${doc.document_name}')" 
+                                        class="text-xs bg-green-100 text-green-800 hover:bg-green-200 px-3 py-1.5 rounded-lg transition-colors flex items-center">
+                                    <i class="fas fa-check mr-1"></i>
+                                    موافقة
+                                </button>
+                                <button onclick="quickRejectDocumentFromDetails(${doc.id}, '${doc.document_name}')" 
+                                        class="text-xs bg-red-100 text-red-800 hover:bg-red-200 px-3 py-1.5 rounded-lg transition-colors flex items-center">
+                                    <i class="fas fa-times mr-1"></i>
+                                    رفض
+                                </button>
+                            ` : ''}
                         </div>
                     </div>
                 `;
@@ -1746,12 +1798,42 @@ function showUserDetailsModal(userData) {
             
             documentsSection = `
                 <div class="mb-6">
-                    <h4 class="font-semibold text-gray-800 mb-3">
-                        <i class="fas fa-file-alt mr-2"></i>
-                        الوثائق (${documents.length})
-                    </h4>
-                    <div class="space-y-3 max-h-64 overflow-y-auto">
+                    <div class="flex items-center justify-between mb-4">
+                        <h4 class="text-lg font-bold text-gray-800 flex items-center">
+                            <i class="fas fa-folder-open text-blue-600 mr-2"></i>
+                            وثائق التحقق
+                        </h4>
+                        <div class="flex items-center space-x-2 space-x-reverse text-sm">
+                            <span class="bg-gray-100 px-2 py-1 rounded text-gray-700">
+                                <i class="fas fa-file-alt mr-1"></i>
+                                ${documents.length} وثيقة
+                            </span>
+                            <span class="bg-green-100 px-2 py-1 rounded text-green-800">
+                                ${documents.filter(d => d.verification_status === 'approved').length} معتمد
+                            </span>
+                            <span class="bg-yellow-100 px-2 py-1 rounded text-yellow-800">
+                                ${documents.filter(d => d.verification_status === 'pending').length} معلق
+                            </span>
+                            <span class="bg-red-100 px-2 py-1 rounded text-red-800">
+                                ${documents.filter(d => d.verification_status === 'rejected').length} مرفوض
+                            </span>
+                        </div>
+                    </div>
+                    <div class="space-y-4 max-h-96 overflow-y-auto">
                         ${documentsHtml}
+                    </div>
+                </div>
+            `;
+        } else {
+            documentsSection = `
+                <div class="mb-6">
+                    <h4 class="text-lg font-bold text-gray-800 flex items-center mb-4">
+                        <i class="fas fa-folder-open text-blue-600 mr-2"></i>
+                        وثائق التحقق
+                    </h4>
+                    <div class="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+                        <i class="fas fa-file-upload text-4xl text-gray-400 mb-3"></i>
+                        <p class="text-gray-600">لم يتم رفع أي وثائق بعد</p>
                     </div>
                 </div>
             `;
@@ -1901,6 +1983,66 @@ async function reviewProviderDocuments(userId) {
     setTimeout(() => {
         reviewProvider(userId, 'المستخدم المحدد');
     }, 500);
+}
+
+// Quick approve document from user details modal
+async function quickApproveDocumentFromDetails(documentId, documentName) {
+    if (confirm(`هل أنت متأكد من الموافقة على وثيقة "${documentName}"؟`)) {
+        try {
+            showMessage('جاري الموافقة على الوثيقة...', 'info');
+            
+            const response = await axios.put(`/api/admin/documents/${documentId}/approve`, {
+                verification_status: 'approved',
+                verification_notes: 'تمت الموافقة على الوثيقة من قبل الإدارة'
+            });
+            
+            if (response.data.success) {
+                showMessage('تمت الموافقة على الوثيقة بنجاح', 'success');
+                // Refresh user details modal
+                setTimeout(() => {
+                    const userId = document.getElementById('user-details-modal').dataset.userId;
+                    if (userId) {
+                        viewUserDetails(userId);
+                    }
+                }, 1000);
+            } else {
+                showMessage(response.data.error || 'حدث خطأ في الموافقة على الوثيقة', 'error');
+            }
+        } catch (error) {
+            console.error('Error approving document:', error);
+            showMessage('حدث خطأ في الموافقة على الوثيقة', 'error');
+        }
+    }
+}
+
+// Quick reject document from user details modal
+async function quickRejectDocumentFromDetails(documentId, documentName) {
+    const reason = prompt(`سبب رفض وثيقة "${documentName}" (اختياري):`);
+    if (reason !== null) {
+        try {
+            showMessage('جاري رفض الوثيقة...', 'info');
+            
+            const response = await axios.put(`/api/admin/documents/${documentId}/reject`, {
+                verification_notes: reason || 'تم رفض الوثيقة من قبل الإدارة'
+            });
+            
+            if (response.data.success) {
+                showMessage('تم رفض الوثيقة', 'success');
+                // Refresh user details modal
+                setTimeout(() => {
+                    const userId = document.getElementById('user-details-modal').dataset.userId;
+                    if (userId) {
+                        viewUserDetails(userId);
+                    }
+                }, 1000);
+            } else {
+                showMessage(response.data.error || 'حدث خطأ في رفض الوثيقة', 'error');
+            }
+        } catch (error) {
+            console.error('Error rejecting document:', error);
+            showMessage('حدث خطأ في رفض الوثيقة', 'error');
+        }
+    }
 }
 
 // Helper functions

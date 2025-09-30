@@ -3420,6 +3420,26 @@ app.get('/api/admin/users/:userId/details', authMiddleware, async (c) => {
         `).bind(providerProfile.id).all() as any;
 
         detailedInfo.requests = recentRequests.results || [];
+
+        // Get provider documents
+        const documents = await env.DB.prepare(`
+          SELECT 
+            pd.id,
+            pd.document_type,
+            pd.document_name,
+            pd.document_url,
+            pd.file_size,
+            pd.mime_type,
+            pd.verification_status,
+            pd.verification_notes,
+            pd.uploaded_at,
+            pd.verified_at
+          FROM provider_documents pd
+          WHERE pd.provider_id = ?
+          ORDER BY pd.uploaded_at DESC
+        `).bind(providerProfile.id).all() as any;
+
+        detailedInfo.documents = documents.results || [];
       }
     }
 
