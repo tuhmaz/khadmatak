@@ -1654,8 +1654,253 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-function viewUserDetails(userId) {
-    showMessage(`عرض تفاصيل المستخدم رقم ${userId} - ميزة قيد التطوير`, 'info');
+// View User Details - Complete Implementation
+async function viewUserDetails(userId) {
+    try {
+        showMessage('جاري تحميل تفاصيل المستخدم...', 'info');
+        
+        const response = await axios.get(`/api/admin/users/${userId}/details`);
+        
+        if (response.data.success) {
+            const userData = response.data.data;
+            showUserDetailsModal(userData);
+        } else {
+            showMessage(response.data.error || 'حدث خطأ في تحميل تفاصيل المستخدم', 'error');
+        }
+    } catch (error) {
+        console.error('Error fetching user details:', error);
+        showMessage('حدث خطأ في تحميل تفاصيل المستخدم', 'error');
+    }
+}
+
+// Show User Details Modal
+function showUserDetailsModal(userData) {
+    const modal = document.createElement('div');
+    modal.id = 'user-details-modal';
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+    
+    const user = userData.user;
+    const profile = userData.profile;
+    const stats = userData.stats;
+    const documents = userData.documents || [];
+    
+    let profileSection = '';
+    let documentsSection = '';
+    
+    // Generate profile section based on user type
+    if (user.user_type === 'provider' && profile) {
+        profileSection = `
+            <div class="mb-6 bg-blue-50 p-4 rounded-lg">
+                <h4 class="font-semibold text-blue-800 mb-3">
+                    <i class="fas fa-briefcase mr-2"></i>
+                    معلومات مقدم الخدمة
+                </h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div><strong>اسم العمل:</strong> ${profile.business_name || 'غير محدد'}</div>
+                    <div><strong>سنوات الخبرة:</strong> ${profile.experience_years || 0} سنة</div>
+                    <div><strong>التخصص:</strong> ${profile.specialization || 'غير محدد'}</div>
+                    <div><strong>الحد الأدنى للأجر:</strong> ${profile.minimum_charge || 0} دينار</div>
+                    <div><strong>التقييم:</strong> ${profile.average_rating || 0}/5 ⭐</div>
+                    <div><strong>المراجعات:</strong> ${profile.total_reviews || 0}</div>
+                    <div><strong>الوظائف المكتملة:</strong> ${profile.total_jobs || 0}</div>
+                    <div><strong>إجمالي الأرباح:</strong> ${profile.total_earnings || 0} دينار</div>
+                </div>
+                ${profile.description ? `
+                    <div class="mt-3">
+                        <strong>الوصف:</strong>
+                        <p class="text-gray-600 mt-1">${profile.description}</p>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+        
+        // Documents section for providers
+        if (documents.length > 0) {
+            const documentsHtml = documents.map(doc => {
+                const statusClass = doc.verification_status === 'approved' ? 'bg-green-100 text-green-800' :
+                                  doc.verification_status === 'rejected' ? 'bg-red-100 text-red-800' :
+                                  'bg-yellow-100 text-yellow-800';
+                
+                const statusText = getVerificationStatusText(doc.verification_status);
+                
+                return `
+                    <div class="bg-gray-50 p-3 rounded border">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="font-medium">${doc.document_name}</span>
+                            <span class="px-2 py-1 rounded text-xs ${statusClass}">${statusText}</span>
+                        </div>
+                        <div class="text-sm text-gray-600">
+                            <div>النوع: ${getDocumentTypeText(doc.document_type)}</div>
+                            <div>تاريخ الرفع: ${new Date(doc.uploaded_at).toLocaleDateString('ar-JO')}</div>
+                            ${doc.verification_notes ? `<div>الملاحظات: ${doc.verification_notes}</div>` : ''}
+                        </div>
+                        <div class="mt-2 flex space-x-2 space-x-reverse">
+                            <button onclick="viewDocument(${doc.id})" 
+                                    class="text-xs bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-1 rounded">
+                                <i class="fas fa-eye"></i> عرض
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            documentsSection = `
+                <div class="mb-6">
+                    <h4 class="font-semibold text-gray-800 mb-3">
+                        <i class="fas fa-file-alt mr-2"></i>
+                        الوثائق (${documents.length})
+                    </h4>
+                    <div class="space-y-3 max-h-64 overflow-y-auto">
+                        ${documentsHtml}
+                    </div>
+                </div>
+            `;
+        }
+    }
+    
+    // Statistics section
+    let statsSection = '';
+    if (stats && Object.keys(stats).length > 0) {
+        statsSection = `
+            <div class="mb-6 bg-gray-50 p-4 rounded-lg">
+                <h4 class="font-semibold text-gray-800 mb-3">
+                    <i class="fas fa-chart-bar mr-2"></i>
+                    الإحصائيات
+                </h4>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-center">
+                    ${stats.total_requests !== undefined ? `
+                        <div class="bg-white p-2 rounded">
+                            <div class="font-bold text-lg">${stats.total_requests}</div>
+                            <div class="text-gray-600">الطلبات</div>
+                        </div>
+                    ` : ''}
+                    ${stats.completed_requests !== undefined ? `
+                        <div class="bg-white p-2 rounded">
+                            <div class="font-bold text-lg">${stats.completed_requests}</div>
+                            <div class="text-gray-600">مكتمل</div>
+                        </div>
+                    ` : ''}
+                    ${stats.pending_requests !== undefined ? `
+                        <div class="bg-white p-2 rounded">
+                            <div class="font-bold text-lg">${stats.pending_requests}</div>
+                            <div class="text-gray-600">معلق</div>
+                        </div>
+                    ` : ''}
+                    ${stats.cancelled_requests !== undefined ? `
+                        <div class="bg-white p-2 rounded">
+                            <div class="font-bold text-lg">${stats.cancelled_requests}</div>
+                            <div class="text-gray-600">ملغي</div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    }
+    
+    modal.innerHTML = `
+        <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div class="p-6 border-b flex items-center justify-between">
+                <div>
+                    <h3 class="text-xl font-bold text-gray-800">
+                        <i class="fas fa-user mr-2"></i>
+                        تفاصيل المستخدم
+                    </h3>
+                    <p class="text-sm text-gray-600">${user.name}</p>
+                </div>
+                <button onclick="closeUserDetailsModal()" 
+                        class="text-gray-400 hover:text-gray-600 text-xl">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="p-6">
+                <!-- Basic Info -->
+                <div class="mb-6 bg-gray-50 p-4 rounded-lg">
+                    <h4 class="font-semibold text-gray-800 mb-3">المعلومات الأساسية:</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                        <div><strong>الاسم:</strong> ${user.name}</div>
+                        <div><strong>البريد الإلكتروني:</strong> ${user.email}</div>
+                        <div><strong>رقم الهاتف:</strong> ${user.phone || 'غير محدد'}</div>
+                        <div><strong>المدينة:</strong> ${user.city || 'غير محدد'}</div>
+                        <div><strong>نوع الحساب:</strong> ${getUserTypeText(user.user_type)}</div>
+                        <div><strong>الحالة:</strong> 
+                            ${user.active ? '<span class="text-green-600">نشط</span>' : '<span class="text-red-600">معطل</span>'}
+                        </div>
+                        <div><strong>محقق:</strong> 
+                            ${user.verified ? '<span class="text-green-600">نعم</span>' : '<span class="text-orange-600">لا</span>'}
+                        </div>
+                        <div><strong>تاريخ التسجيل:</strong> ${new Date(user.created_at).toLocaleDateString('ar-JO')}</div>
+                    </div>
+                </div>
+                
+                ${profileSection}
+                ${documentsSection}
+                ${statsSection}
+            </div>
+            
+            <div class="p-6 border-t flex justify-between items-center">
+                <div class="flex space-x-2 space-x-reverse">
+                    ${user.user_type === 'provider' && documents.length > 0 ? `
+                        <button onclick="reviewProviderDocuments(${user.id})" 
+                                class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm">
+                            <i class="fas fa-file-check mr-1"></i>
+                            مراجعة الوثائق
+                        </button>
+                    ` : ''}
+                </div>
+                
+                <div class="flex space-x-2 space-x-reverse">
+                    <button onclick="toggleUserStatus(${user.id}, '${user.name}', ${!user.active})" 
+                            class="${user.active ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded text-sm">
+                        <i class="fas fa-${user.active ? 'ban' : 'check'} mr-1"></i>
+                        ${user.active ? 'تعطيل' : 'تفعيل'}
+                    </button>
+                    <button onclick="closeUserDetailsModal()" 
+                            class="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600 text-sm">
+                        إغلاق
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Close modal on outside click
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            closeUserDetailsModal();
+        }
+    });
+}
+
+// Close User Details Modal
+function closeUserDetailsModal() {
+    const modal = document.getElementById('user-details-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// Helper function for user types
+function getUserTypeText(type) {
+    const types = {
+        'admin': 'مدير',
+        'provider': 'مقدم خدمة', 
+        'customer': 'عميل'
+    };
+    return types[type] || 'غير محدد';
+}
+
+// Review Provider Documents function
+async function reviewProviderDocuments(userId) {
+    closeUserDetailsModal();
+    // Switch to providers view and show documents
+    switchView('providers');
+    // Wait a moment for the view to load, then trigger provider review
+    setTimeout(() => {
+        reviewProvider(userId, 'المستخدم المحدد');
+    }, 500);
 }
 
 // Helper functions
